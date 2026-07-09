@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
@@ -9,6 +10,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
+from app.crawler.filters import detect_lang, translate_to_zh
 from app.db.models import IntelItem, Report
 
 logger = logging.getLogger(__name__)
@@ -24,7 +26,40 @@ SYSTEM_ORDER = [
     (6, "戒毒康复医疗机构体系"),
     (7, "国际禁毒协作机构"),
     (8, "全国媒体与公开资讯"),
+    (9, "官方统计与年报体系"),
+    (10, "全球媒体与国际禁毒机构"),
 ]
+
+# 机构/来源名中文映射（报告展示用）
+ORG_NAME_ZH = {
+    "UNODC": "联合国毒品和犯罪问题办公室",
+    "INCB": "国际麻醉品管制局",
+    "WHO": "世界卫生组织",
+    "WCO": "世界海关组织",
+    "INTERPOL": "国际刑警组织",
+    "Reuters": "路透社",
+    "AP News": "美联社",
+    "BBC": "英国广播公司",
+    "The Guardian": "卫报",
+    "CNN": "美国有线电视新闻网",
+    "Al Jazeera": "半岛电视台",
+    "The Diplomat": "外交官杂志",
+    "Radio Free Asia": "自由亚洲电台",
+    "VOA": "美国之音",
+    "Nikkei Asia": "日经亚洲",
+    "South China Morning Post": "南华早报",
+    "Xinhua 新华社": "新华社",
+    "CGTN": "中国国际电视台",
+    "TASS": "塔斯社",
+    "RIA Novosti": "俄新社",
+    "VICE": "VICE新闻",
+    "AKIpress": "AKIpress新闻社",
+    "GoGo 新闻": "GoGo新闻",
+    "IKON 新闻": "IKON新闻",
+    "News.mn": "News.mn",
+    "UB Post": "乌兰巴托邮报",
+    "蒙通社 MONTSAME": "蒙通社",
+}
 
 
 class AnalysisEngine:
@@ -32,6 +67,7 @@ class AnalysisEngine:
 
     def __init__(self, db: Session):
         self.db = db
+        self._zh_cache: Dict[str, str] = {}
 
     def collect_items(self, days: int = 7) -> List[IntelItem]:
         since = datetime.utcnow() - timedelta(days=days)
@@ -42,6 +78,71 @@ class AnalysisEngine:
             .order_by(IntelItem.crawled_at.desc())
             .all()
         )
+
+    @staticmethod
+    def _has_cjk(text: str) -> bool:
+        return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
+    def _to_zh(self, text: str) -> str:
+        """报告内强制中文：已是中文则保留，否则翻译。"""
+        text = (text or "").strip()
+        if not text:
+            return text
+        if text in self._zh_cache:
+            return self._zh_cache[text]
+        if self._has_cjk(text) and detect_lang(text) == "zh":
+            self._zh_cache[text] = text
+            return text
+        # 标题里中英混排且已有足够中文，直接用
+        if self._has_cjk(text) and len(re.findall(r"[\u4e00-\u9fff]", text)) >= max(4, len(text) // 4):
+            self._zh_cache[text] = text
+            return text
+        zh = translate_to_zh(text, enabled=True)
+        # 翻译失败则尽量做轻量替换
+        if not zh or zh == text:
+            zh = text
+            for en, cn in (
+                ("Mongolia", "蒙古国"),
+                ("Ulaanbaatar", "乌兰巴托"),
+                ("drug", "毒品"),
+                ("narcotic", "麻醉品"),
+                ("methamphetamine", "冰毒"),
+                ("heroin", "海洛因"),
+                ("cannabis", "大麻"),
+                ("fentanyl", "芬太尼"),
+                ("ketamine", "氯胺酮"),
+                ("police", "警方"),
+                ("customs", "海关"),
+                ("seizure", "查获"),
+                ("trafficking", "贩运"),
+                ("smuggling", "走私"),
+            ):
+                zh = re.sub(re.escape(en), cn, zh, flags=re.I)
+        self._zh_cache[text] = zh
+        return zh
+
+    def _org_zh(self, org_name: str) -> str:
+        org = (org_name or "").strip()
+        if not org:
+            return "未知机构"
+        if org in ORG_NAME_ZH:
+            return ORG_NAME_ZH[org]
+        for k, v in ORG_NAME_ZH.items():
+            if k.lower() in org.lower() or org.lower() in k.lower():
+                return v
+        # 搜索任务名：搜索·英语·xxx → 保留结构并译后缀
+        if org.startswith("搜索·") or org.startswith("国际") or org.startswith("全球") or org.startswith("统计"):
+            return self._to_zh(org) if not self._has_cjk(org) else org
+        if self._has_cjk(org):
+            return org
+        return self._to_zh(org)
+
+    def _item_title_zh(self, item: IntelItem) -> str:
+        # 优先已有中文标题；否则强制翻译原文标题
+        if item.title_zh and self._has_cjk(item.title_zh):
+            return item.title_zh.strip()
+        raw = (item.title_zh or item.title or "").strip()
+        return self._to_zh(raw)
 
     def generate_report(self, report_type: str = "daily", days: Optional[int] = None) -> Report:
         days = days or {"daily": 1, "weekly": 7, "monthly": 30, "alert": 1}.get(report_type, 7)
@@ -98,7 +199,7 @@ class AnalysisEngine:
             by_system[it.system_id or 0].append(it)
             by_category[it.category or "综合"] += 1
             by_level[it.intel_level or "一般"] += 1
-            by_org[it.org_name or "未知机构"] += 1
+            by_org[self._org_zh(it.org_name)] += 1
             if it.is_alert or it.intel_level in ("紧急", "重要"):
                 alerts.append(it)
 
@@ -111,6 +212,7 @@ class AnalysisEngine:
         )
         lines.append(f"**有效情报条目**：{len(items)} 条")
         lines.append(f"**告警/重要条目**：{len(alerts)} 条")
+        lines.append("**报告语言**：中文（外文标题已自动译为中文）")
         lines.append("")
 
         # 1 本期情报综述
@@ -145,15 +247,15 @@ class AnalysisEngine:
             if not group:
                 lines.append("- 本周期无新增公开禁毒相关动态。")
             else:
-                # 机构工作重心研判
                 cats = Counter([g.category for g in group])
                 focus = "、".join([c for c, _ in cats.most_common(3)]) or "综合"
                 lines.append(f"- **工作重心研判**：近期公开信息侧重「{focus}」。")
                 for g in group[:8]:
-                    title = g.title_zh or g.title
+                    title = self._item_title_zh(g)
+                    org = self._org_zh(g.org_name)
                     pub = (g.published_at or g.crawled_at).strftime("%Y-%m-%d") if (g.published_at or g.crawled_at) else "-"
                     lines.append(
-                        f"- 【{g.intel_level}】[{title}]({g.url})｜机构：{g.org_name}｜时间：{pub}｜类别：{g.category}"
+                        f"- 【{g.intel_level}】[{title}]({g.url})｜机构：{org}｜时间：{pub}｜类别：{g.category}"
                     )
             lines.append("")
 
@@ -168,7 +270,7 @@ class AnalysisEngine:
                 "对“严查/专项/大规模查获”表述应提升监测优先级，并与海关、边防同源信息交叉比对。"
             )
             for g in cross[:6]:
-                lines.append(f"- {g.title_zh or g.title}（{g.org_name}）— {g.url}")
+                lines.append(f"- {self._item_title_zh(g)}（{self._org_zh(g.org_name)}）— {g.url}")
         else:
             lines.append(
                 "本周期公开渠道未见显著跨境走私通道变化通报。维持对海关、边防、外交涉毒合作栏目的常态监测，"
@@ -183,7 +285,7 @@ class AnalysisEngine:
         if policy:
             lines.append(f"检出政策法规类信息 {len(policy)} 条，建议核查是否涉及管制目录调整、刑罚适用或监管流程变更。")
             for g in policy[:6]:
-                lines.append(f"- {g.title_zh or g.title} — {g.url}")
+                lines.append(f"- {self._item_title_zh(g)} — {g.url}")
         else:
             lines.append("本周期未见明确新法出台或管制目录重大调整的公开信息。")
         lines.append("")
@@ -201,7 +303,7 @@ class AnalysisEngine:
                 "风险研判：若出现新增管制品类、合成毒品流通或易制毒化学品监管新规，应立即纳入紧急推送与专题跟踪。"
             )
             for g in (novel + precursor)[:8]:
-                lines.append(f"- 【{g.category}】{g.title_zh or g.title} — {g.url}")
+                lines.append(f"- 【{g.category}】{self._item_title_zh(g)} — {g.url}")
         else:
             lines.append("本周期公开渠道未检出新型毒品或制毒原料监管重大异常信号。")
         lines.append("")
@@ -213,7 +315,7 @@ class AnalysisEngine:
         if rehab:
             lines.append(f"戒毒康复与社会防毒相关公开信息 {len(rehab)} 条，反映蒙方在成瘾干预与预防宣传方面的公开工作节奏。")
             for g in rehab[:5]:
-                lines.append(f"- {g.title_zh or g.title} — {g.url}")
+                lines.append(f"- {self._item_title_zh(g)} — {g.url}")
         else:
             lines.append("本周期戒毒康复类公开动态较少，维持对卫生部门与康复机构栏目监测。")
         lines.append("")
@@ -221,11 +323,11 @@ class AnalysisEngine:
         # 7 国际协作
         lines.append("## 七、国际协作研判")
         lines.append("")
-        intl = [i for i in items if i.system_id == 7 or i.category == "国际协作" or self._match(i, ["UNODC", "国际", "олон улсын"])]
+        intl = [i for i in items if i.system_id in (7, 10) or i.category == "国际协作" or self._match(i, ["UNODC", "国际", "олон улсын"])]
         if intl:
-            lines.append(f"国际禁毒协作相关公开信息 {len(intl)} 条，重点关注 UNODC 蒙古项目与外交部涉外禁毒合作表述。")
+            lines.append(f"国际禁毒协作及相关全球媒体公开信息 {len(intl)} 条，重点关注 UNODC 蒙古项目与国际媒体涉蒙毒情报道。")
             for g in intl[:6]:
-                lines.append(f"- {g.title_zh or g.title}（{g.org_name}）— {g.url}")
+                lines.append(f"- {self._item_title_zh(g)}（{self._org_zh(g.org_name)}）— {g.url}")
         else:
             lines.append("本周期国际协作公开信息有限，继续跟踪 UNODC 与外交部合作栏目。")
         lines.append("")
@@ -244,8 +346,8 @@ class AnalysisEngine:
                 pub = (g.published_at or g.crawled_at)
                 pub_s = pub.strftime("%Y-%m-%d %H:%M") if pub else "-"
                 lines.append(
-                    f"{idx}. 【{g.intel_level}/{g.category}】{g.title_zh or g.title}｜"
-                    f"{g.org_name}｜{pub_s}｜来源：{g.url}"
+                    f"{idx}. 【{g.intel_level}/{g.category}】{self._item_title_zh(g)}｜"
+                    f"{self._org_zh(g.org_name)}｜{pub_s}｜来源：{g.url}"
                 )
         lines.append("")
 
@@ -263,10 +365,10 @@ class AnalysisEngine:
         lines.append("3. 卫生/药品监管部门麻精药品、易制毒化学品及管制目录调整。")
         lines.append("4. 合成毒品、新精神活性物质相关公开表述与实验室检测信息。")
         lines.append("5. 戒毒康复政策、成瘾数据与社会预防举措。")
-        lines.append("6. UNODC 蒙古项目进展及外交部国际禁毒合作公开信息。")
+        lines.append("6. UNODC 蒙古项目进展、全球主流媒体及国际禁毒机构涉蒙公开信息。")
         lines.append("")
         lines.append("---")
-        lines.append("*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成，数据仅来源于蒙古国官方禁毒体系及 UNODC 公开渠道。*")
+        lines.append("*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成，正文为中文；数据来源于蒙古国官方体系、全球主流媒体及国际禁毒机构公开渠道。*")
         return "\n".join(lines)
 
     def _risk_outlook(self, items: List[IntelItem], by_category: Counter, alerts: list) -> str:
