@@ -132,6 +132,20 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
             return True
     if host.endswith("unodc.org") or host.endswith("news.google.com"):
         return True
+    # 国际主流媒体 / 禁毒机构常见后缀放行（已在 GLOBAL_ALLOWED_DOMAINS 白名单为主）
+    intl_suffixes = (
+        "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "theguardian.com",
+        "cnn.com", "aljazeera.com", "thediplomat.com", "rfa.org", "voanews.com",
+        "scmp.com", "nikkei.com", "news.cn", "xinhuanet.com", "cgtn.com",
+        "tass.com", "ria.ru", "akipress.com", "vice.com", "bloomberg.com",
+        "nytimes.com", "washingtonpost.com", "wsj.com", "ft.com", "dw.com",
+        "incb.org", "who.int", "wcoomd.org", "interpol.int", "state.gov",
+        "dea.gov", "euda.europa.eu", "emcdda.europa.eu", "ocindex.net",
+        "eurasianet.org", "france24.com", "japantimes.co.jp", "yna.co.kr",
+    )
+    for suf in intl_suffixes:
+        if host == suf or host.endswith("." + suf):
+            return True
     if ALLOW_ANY_MN_DOMAIN and host.endswith(".mn"):
         return True
     return False

@@ -10,6 +10,7 @@ from app.crawler.stats_extract import extract_stats_from_text
 from config.sources import SOURCES, ALLOWED_DOMAINS
 from config.drug_lexicon import all_drug_keywords, build_search_queries
 from config.official_stats import OFFICIAL_STAT_SOURCES, OFFICIAL_STAT_SEARCHES, PDF_SEARCH_QUERIES
+from config.global_media import GLOBAL_COVERAGE_SOURCES, build_global_search_queries
 
 
 def test_sources_cover_seven_systems():
@@ -73,6 +74,16 @@ def test_official_stats_config():
     assert any(s["org_name"] == "总检察院" for s in OFFICIAL_STAT_SOURCES)
     assert len(OFFICIAL_STAT_SEARCHES) >= 4
     assert len(PDF_SEARCH_QUERIES) >= 4
+
+
+def test_global_media_config():
+    assert len(GLOBAL_COVERAGE_SOURCES) >= 20
+    gq = build_global_search_queries(mode="news", when="7d")
+    assert len(gq) >= 15
+    assert any("Reuters" in (q.get("org_name") or "") for q in gq)
+    assert any("UNODC" in (q.get("org_name") or "") for q in gq)
+    full = build_search_queries(mode="full")
+    assert any(q.get("system_id") == 10 for q in full)
 
 
 def test_stats_extract():

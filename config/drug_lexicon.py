@@ -331,6 +331,11 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
                 "tier": "news" if news_mode else "full",
             })
 
+    # —— 全球主流媒体 + 国际禁毒机构 ——
+    from config.global_media import build_global_search_queries
+
+    tasks.extend(build_global_search_queries(mode=mode, when=when))
+
     return tasks
 
 

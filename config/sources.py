@@ -341,4 +341,11 @@ ALLOWED_DOMAINS = [
     "parliament.mn", "www.parliament.mn",
 ]
 
+# 合并全球媒体与国际机构域名
+from config.global_media import GLOBAL_ALLOWED_DOMAINS  # noqa: E402
+
+ALLOWED_DOMAINS = list(dict.fromkeys(ALLOWED_DOMAINS + GLOBAL_ALLOWED_DOMAINS))
+
 ALLOW_ANY_MN_DOMAIN = True
+# 搜索聚合入库时允许全球主流媒体域名（已在白名单）
+ALLOW_GLOBAL_MEDIA = True
