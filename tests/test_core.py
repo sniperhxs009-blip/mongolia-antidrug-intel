@@ -24,7 +24,11 @@ def test_allowed_domains_not_empty():
 def test_drug_filter():
     assert is_drug_related("Мансууруулах бодисын эсрэг ажиллагаа")
     assert is_drug_related("Customs seized narcotic drugs at border")
+    assert is_drug_related("Mongolian detectives seize drug smuggler")
     assert not is_drug_related("Today weather is sunny in Ulaanbaatar city festival")
+    assert not is_drug_related("Two Seasons Dining Facility Mongolian BBQ")
+    assert not is_drug_related("combat human trafficking in Mongolia")
+    assert not is_drug_related("Russian medicine for hepatitis tax-free in Mongolia")
 
 
 def test_url_allowlist():
@@ -41,7 +45,7 @@ def test_hash_stable():
 
 
 def test_category():
-    assert classify_category("border customs seizure") == "跨境毒情"
+    assert classify_category("border customs drug trafficking seizure") == "跨境毒情"
 
 
 def test_lexicon_large():

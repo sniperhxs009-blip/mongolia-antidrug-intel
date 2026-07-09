@@ -12,11 +12,84 @@ from config.sources import ALLOW_ANY_MN_DOMAIN, ALLOWED_DOMAINS, CRITICAL_KEYWOR
 
 logger = logging.getLogger(__name__)
 
-# 明确排除的非目标域名
 BLOCKED_SUFFIXES = (
     "facebook.com", "twitter.com", "x.com", "instagram.com", "tiktok.com",
     "youtube.com", "linkedin.com", "wikipedia.org", "pinterest.com",
 )
+
+# 强涉毒词：单独出现即可认定（排除过于宽泛的 drug/trafficking）
+STRONG_DRUG_TERMS = [
+    # 中文
+    "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒", "运毒", "戒毒",
+    "海洛因", "可卡因", "冰毒", "大麻", "鸦片", "罂粟", "芬太尼", "氯胺酮",
+    "摇头丸", "K粉", "麻古", "易制毒", "麻精药品", "合成毒品", "新型毒品",
+    "毒枭", "毒贩", "查获毒品", "走私毒品",
+    # 蒙语
+    "мансууруулах", "хар тамхи", "наркотик", "героин", "кокаин", "каннабис",
+    "метамфетамин", "амфетамин", "кетамин", "фентанил", "экстази", "прекурсор",
+    "донтсон", "марихуан", "гашиш", "опиум",
+    # 英语强词
+    "narcotic", "narcotics", "heroin", "cocaine", "methamphetamine", "meth ",
+    " cannabis", "marijuana", "hashish", "fentanyl", "ketamine", "mdma",
+    "ecstasy", "opium", "opioid", "precursor", "anti-drug", "antidrug",
+    "drug bust", "drug raid", "drug smugg", "drug traffick", "drug seizure",
+    "seized drug", "illegal drug", "illicit drug", "controlled substance",
+    "synthetic cannabinoid", "nitazene", "xylazine", "bath salt",
+    "psychotropic", "мансууруулах бодис",
+]
+
+# 弱词：必须与强语境组合，不能单独入库
+WEAK_DRUG_TERMS = [
+    "drug", "drugs", "trafficking", "trafficker", "smuggling", "smuggler",
+    "seizure", "seized", "addiction", "addict", "rehab", "rehabilitation",
+    "overdose", "баривчилгаа", "хураан авсан",
+]
+
+# 明确排除：医药、人口贩运、餐饮、文体、艺术等
+NEGATIVE_PATTERNS = [
+    r"\bmongolia\s*grill\b",
+    r"\bmongolian\s*bbq\b",
+    r"\bmongolian\s*barbecue\b",
+    r"\bmongolian\s*beef\b",
+    r"\brestaurant\b",
+    r"\bdining\b",
+    r"\bmenu\b",
+    r"\bbbq\b",
+    r"\bbarbecue\b",
+    r"\bolympic",
+    r"\bgold\s*medal\b",
+    r"\bpainting\b",
+    r"\bcaravaggio\b",
+    r"\bart\s*exhibit",
+    r"\bmuseum\b",
+    r"\bhepatitis\b",
+    r"\bpharma",
+    r"\bmedicine\b",
+    r"\bmedication\b",
+    r"\bvaccine\b",
+    r"\btreatment\s+for\b",
+    r"human\s+traffick",
+    r"sex\s+traffick",
+    r"people\s+traffick",
+    r"anti[- ]?corruption",
+    r"orphanage",
+    r"asset\s+recover",
+    r"low[- ]priced\s+stock",
+    r"stock\s+market",
+    r"coal\s+mine",
+    r"rape\b",
+    r"人口贩运",
+    r"拐卖",
+    r"反腐败",
+    r"奥运会",
+    r"金牌",
+    r"烤肉",
+    r"餐厅",
+    r"画作",
+    r"肝炎",
+    r"药品免税",
+    r"хүн\s*худалдах",  # human trafficking mn
+]
 
 
 def content_hash(title: str, url: str, body: str = "") -> str:
@@ -51,38 +124,78 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
             return True
     if host.endswith("unodc.org") or host.endswith("news.google.com"):
         return True
-    # 海量采集：允许蒙古国域名公开资讯
     if ALLOW_ANY_MN_DOMAIN and host.endswith(".mn"):
         return True
     return False
 
 
+def _has_negative(blob: str) -> bool:
+    for pat in NEGATIVE_PATTERNS:
+        if re.search(pat, blob, flags=re.IGNORECASE):
+            return True
+    return False
+
+
 def is_drug_related(text: str, extra_keywords: Optional[list] = None, loose: bool = False) -> bool:
+    """严格涉毒判定：强词命中，或弱词+强语境；并排除医药/人口贩运/餐饮等。"""
     blob = (text or "").lower()
     if not blob:
         return False
+
+    # 先排除明显无关
+    if _has_negative(blob):
+        # 若同时有非常明确的毒品强词，仍可放行（如“毒贩在餐厅落网”）
+        strong_override = any(
+            k in blob
+            for k in [
+                "наркотик", "мансууруулах", "хар тамхи", "heroin", "cocaine",
+                "methamphetamine", "fentanyl", "ketamine", "毒品", "毒贩", "缉毒",
+                "illegal drug", "illicit drug", "drug smugg", "drug traffick",
+            ]
+        )
+        if not strong_override:
+            return False
+
+    # 1) 强词
+    for kw in STRONG_DRUG_TERMS:
+        if kw.lower().strip() in blob:
+            return True
+
+    # 2) 词库中的具体品名（跳过过于宽泛的 drug/trafficking）
+    skip_broad = {"drug", "drugs", "trafficking", "trafficker", "smuggling", "smuggler", "seizure", "seized"}
     keys = list(DRUG_KEYWORDS)
     if extra_keywords:
         keys.extend(extra_keywords)
-    # 去重并按长度降序，优先长词
-    keys = sorted(set(keys), key=len, reverse=True)
-    for kw in keys:
+    for kw in sorted(set(keys), key=len, reverse=True):
         k = kw.lower().strip()
-        if not k:
+        if not k or k in skip_broad or len(k) < 4:
             continue
         if k in blob:
             return True
+
+    # 3) 弱词必须搭配明确毒品语境
+    has_weak = any(w in blob for w in WEAK_DRUG_TERMS)
+    narcotic_context = any(
+        x in blob
+        for x in [
+            "narcotic", "heroin", "cocaine", "meth", "cannabis", "marijuana",
+            "opium", "fentanyl", "ketamine", "мансууруулах", "хар тамхи",
+            "наркотик", "毒品", "毒贩", "缉毒", "illegal", "illicit",
+        ]
+    )
+    if has_weak and narcotic_context:
+        return True
+
+    # loose 不再用“警察+抓捕”这种过宽组合
     if loose:
-        # 宽松模式：执法/海关/边境 + 查获类组合
-        combo_a = any(x in blob for x in ["баривчилгаа", "seizure", "seized", "查获", "缴获", "arrest"])
-        combo_b = any(x in blob for x in ["хил", "гааль", "цагдаа", "border", "customs", "police", "口岸", "海关", "警察"])
-        if combo_a and combo_b:
-            return True
+        return False
     return False
 
 
 def is_critical(text: str, extra: Optional[list] = None) -> bool:
     blob = (text or "").lower()
+    if not is_drug_related(blob):
+        return False
     keys = list(CRITICAL_KEYWORDS)
     if extra:
         keys.extend(extra)
@@ -94,13 +207,17 @@ def is_critical(text: str, extra: Optional[list] = None) -> bool:
 
 def classify_category(text: str) -> str:
     t = (text or "").lower()
+    # 人口贩运不要进跨境毒情
+    if re.search(r"human\s+traffick|sex\s+traffick|people\s+traffick|人口贩运|拐卖", t):
+        if not is_drug_related(t):
+            return "综合"
     rules = [
-        ("跨境毒情", ["跨境", "口岸", "边境", "хил", "гааль", "border", "customs", "trafficking"]),
+        ("跨境毒情", ["跨境", "口岸", "边境", "хил", "гааль", "border", "customs", "drug traffick", "smuggl"]),
         ("新型毒品", ["合成", "芬太尼", "冰毒", "синтетик", "synthetic", "meth", "fentanyl", "NPS", "метамфетамин"]),
-        ("制毒原料", ["易制毒", "麻精", "precursor", "прекурсор", "controlled"]),
+        ("制毒原料", ["易制毒", "麻精", "precursor", "прекурсор", "controlled substance"]),
         ("戒毒康复", ["戒毒", "康复", "成瘾", "нөхөн сэргээх", "донтсон", "rehab", "addiction"]),
         ("国际协作", ["UNODC", "国际", "олон улсын", "cooperation", "外交"]),
-        ("执法行动", ["缉毒", "查获", "专项", "баривчилгаа", "seizure", "operation", "цагдаа"]),
+        ("执法行动", ["缉毒", "查获", "专项", "баривчилгаа", "seizure", "operation", "цагдаа", "arrest"]),
         ("政策法规", ["立法", "法规", "新法", "хууль", "legal", "regulation", "policy"]),
         ("媒体报道", ["news", "мэдээ", "报道", "通讯"]),
     ]
@@ -115,8 +232,10 @@ def intel_level(text: str) -> str:
     if is_critical(text):
         return "紧急"
     t = (text or "").lower()
-    important = ["查获", "逮捕", "管制", "专项", "seizure", "seized", "arrest", "баривчилгаа", "тусгай"]
-    watch = ["会议", "培训", "宣传", "урьдчилан", "prevention", "meeting", "мэдээ"]
+    if not is_drug_related(t):
+        return "一般"
+    important = ["查获", "逮捕", "管制", "专项", "seizure", "seized", "arrest", "баривчилгаа", "тусгай", "smuggl"]
+    watch = ["会议", "培训", "宣传", "урьдчилан", "prevention", "meeting", "мэдээ", "UNODC"]
     for kw in important:
         if kw.lower() in t:
             return "重要"
@@ -181,7 +300,6 @@ def parse_date_guess(text: str) -> Optional[datetime]:
 
 
 def is_stale(published_at: Optional[datetime], max_days: int = 3650) -> bool:
-    """默认保留近10年公开资讯，避免误杀历史通报。"""
     if not published_at:
         return False
     return published_at < datetime.utcnow() - timedelta(days=max_days)

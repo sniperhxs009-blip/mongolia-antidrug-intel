@@ -223,7 +223,10 @@ class SearchFeedCollector:
                 continue
             # 标题必须涉毒，或明确包含本轮搜索词 —— 禁止把侧边栏热搜一并入库
             title_blob = text.lower()
-            if not is_drug_related(text, loose=True) and query not in title_blob:
+            if not is_drug_related(text, loose=False) and query not in title_blob:
+                continue
+            # 即使包含查询词，也必须通过严格涉毒判定
+            if not is_drug_related(text, loose=False):
                 continue
             candidates.append((text, full))
 
@@ -295,12 +298,8 @@ class SearchFeedCollector:
             self.stats["items_filtered"] += 1
             return
 
-        # 涉毒：标题/摘要必须命中词库（不允许仅因查询词放行）
-        if not force_drug:
-            if not is_drug_related(body, loose=True):
-                self.stats["items_filtered"] += 1
-                return
-        elif not is_drug_related(body, loose=True) and not is_drug_related(feed.get("query", ""), loose=True):
+        # 涉毒：标题/摘要必须命中强词库（严格模式）
+        if not is_drug_related(body, loose=False):
             self.stats["items_filtered"] += 1
             return
 

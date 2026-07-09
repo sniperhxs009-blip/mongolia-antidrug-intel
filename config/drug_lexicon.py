@@ -149,19 +149,18 @@ def build_search_queries() -> List[dict]:
             "require_mongolia": False,  # 蒙文国内稿标题常不写国名；靠查询词 Монгол + 涉毒词
         })
 
-    # —— 英语：蒙古 + 各类毒品 ——
+    # —— 英语：蒙古 + 明确毒品品名（不用裸 drug/trafficking）——
     en_drug_groups = [
-        "drug OR narcotic OR trafficking",
-        "methamphetamine OR meth OR \"crystal meth\"",
-        "heroin OR opium OR opioid",
+        "narcotic OR \"illegal drug\" OR \"illicit drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
+        "methamphetamine OR \"crystal meth\"",
+        "heroin OR opium",
         "cannabis OR marijuana OR hashish",
         "cocaine",
         "fentanyl OR nitazene OR xylazine",
         "ketamine OR MDMA OR ecstasy",
-        "\"synthetic cannabinoid\" OR spice OR NPS",
+        "\"synthetic cannabinoid\" OR \"designer drug\" OR NPS",
         "precursor OR ephedrine OR pseudoephedrine",
-        "seizure OR seized OR smuggling",
-        "UNODC",
+        "\"drug seizure\" OR \"drugs seized\" OR \"drug bust\"",
     ]
     for g in en_drug_groups:
         tasks.append({

@@ -1,4 +1,4 @@
-"""清理不符合「蒙古国 + 涉毒」双条件的脏数据。"""
+"""清理不符合「蒙古国 + 真正涉毒」双条件的脏数据。"""
 from __future__ import annotations
 
 import re
@@ -16,7 +16,7 @@ MONGOLIA_MARKERS = [
 
 
 def is_mongolia_related(text: str) -> bool:
-    t = (text or "")
+    t = text or ""
     tl = t.lower()
     if "内蒙古" in t and "蒙古国" not in t:
         return False
@@ -24,20 +24,15 @@ def is_mongolia_related(text: str) -> bool:
         return False
     if any(m in tl for m in MONGOLIA_MARKERS):
         return True
-    if "蒙古国" in t:
-        return True
-    # 蒙古媒体域名文章：由调用方结合 org/url 判断
-    return False
+    return "蒙古国" in t
 
 
 def is_from_mn_media(item: IntelItem) -> bool:
     url = (item.url or "").lower()
-    org = (item.org_name or "")
+    org = item.org_name or ""
     if any(d in url for d in ("gogo.mn", "montsame.mn", "ikon.mn", "news.mn", "police.gov.mn", "gov.mn")):
         return True
-    if "站内搜索" in org:
-        return True
-    return False
+    return "站内搜索" in org
 
 
 def purge_irrelevant_items(db: Session) -> Dict[str, int]:
@@ -55,13 +50,8 @@ def purge_irrelevant_items(db: Session) -> Dict[str, int]:
                 it.content_zh or "",
             ]
         )
-        drug_ok = is_drug_related(blob, loose=True)
+        drug_ok = is_drug_related(blob, loose=False)
         mn_ok = is_mongolia_related(blob) or is_from_mn_media(it)
-        # 媒体站内也必须涉毒
-        if is_from_mn_media(it) and not drug_ok:
-            db.delete(it)
-            deleted += 1
-            continue
         if not drug_ok or not mn_ok:
             db.delete(it)
             deleted += 1
