@@ -177,8 +177,13 @@ def get_report(report_id: int, db: Session = Depends(get_db)):
     }
 
 
-@router.get("/api/crawl/status")
-def crawl_status(run_id: Optional[str] = None):
+@router.post("/api/intel/purge")
+def purge_intel(db: Session = Depends(get_db)):
+    """清理非蒙古国或非涉毒的脏数据。"""
+    from app.crawler.cleanup import purge_irrelevant_items
+
+    result = purge_irrelevant_items(db)
+    return {"status": "ok", **result}
     prog = progress_hub.get(run_id) if run_id else progress_hub.current()
     if not prog:
         return {"status": "idle", "busy": False}

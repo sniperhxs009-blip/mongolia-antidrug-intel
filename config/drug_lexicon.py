@@ -140,37 +140,40 @@ def build_search_queries() -> List[dict]:
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"搜索·蒙语·{q[:18]}",
-            "query": q,
+            # 强制带上蒙古国约束，避免串入他国俄语/国际新闻
+            "query": f"Монгол ({q})",
             "hl": "mn",
             "gl": "mn",
             "ceid": "MN:mn",
             "engine": "google_news",
+            "require_mongolia": False,  # 蒙文国内稿标题常不写国名；靠查询词 Монгол + 涉毒词
         })
 
     # —— 英语：蒙古 + 各类毒品 ——
     en_drug_groups = [
         "drug OR narcotic OR trafficking",
-        "methamphetamine OR meth OR crystal meth",
+        "methamphetamine OR meth OR \"crystal meth\"",
         "heroin OR opium OR opioid",
         "cannabis OR marijuana OR hashish",
-        "cocaine OR crack",
+        "cocaine",
         "fentanyl OR nitazene OR xylazine",
         "ketamine OR MDMA OR ecstasy",
-        "synthetic cannabinoid OR spice OR NPS",
+        "\"synthetic cannabinoid\" OR spice OR NPS",
         "precursor OR ephedrine OR pseudoephedrine",
-        "seizure OR seized OR bust OR smuggling",
-        "UNODC OR anti-drug",
+        "seizure OR seized OR smuggling",
+        "UNODC",
     ]
     for g in en_drug_groups:
         tasks.append({
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
-            "org_name": f"搜索·英语·{g.split(' OR ')[0][:16]}",
+            "org_name": f"搜索·英语·{g.split(' OR ')[0].replace(chr(34),'')[:16]}",
             "query": f"Mongolia ({g})",
             "hl": "en",
             "gl": "us",
             "ceid": "US:en",
             "engine": "google_news",
+            "require_mongolia": True,
         })
 
     # —— 中文：蒙古国 + 毒品 ——
@@ -186,11 +189,12 @@ def build_search_queries() -> List[dict]:
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"搜索·中文·{g.split(' OR ')[0]}",
-            "query": f"蒙古国 ({g})",
+            "query": f"\"蒙古国\" ({g})",
             "hl": "zh-CN",
             "gl": "cn",
             "ceid": "CN:zh-Hans",
             "engine": "google_news",
+            "require_mongolia": True,
         })
 
     # —— 媒体站内搜索（可打开原文）——
@@ -231,6 +235,7 @@ def build_search_queries() -> List[dict]:
                 "ceid": "MN:mn",
                 "engine": "site_search",
                 "search_url": site["template"].format(q=q),
+                "require_mongolia": False,
             })
 
     return tasks

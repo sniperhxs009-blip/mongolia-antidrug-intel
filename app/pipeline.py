@@ -46,6 +46,20 @@ def run_intel_cycle(
     emit("phase", status="running", phase="启动", message="情报流水线已启动")
 
     if not skip_crawl:
+        # 0) 先清理历史脏数据（非蒙古 / 非涉毒）
+        try:
+            from app.crawler.cleanup import purge_irrelevant_items
+
+            purged = purge_irrelevant_items(db)
+            emit(
+                "phase",
+                status="running",
+                phase="数据清洗",
+                message=f"已清理无关条目 {purged.get('deleted', 0)} 条，保留 {purged.get('kept', 0)} 条",
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cleanup failed: %s", exc)
+
         # 1) 先跑全量关键词搜索（快、量大、可打开原文）
         if settings.enable_search_feeds:
             emit(

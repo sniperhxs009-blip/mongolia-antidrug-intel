@@ -183,7 +183,8 @@ class SearchFeedCollector:
                 summary=summary,
                 url=real_url or link,
                 published=published,
-                require_mongolia=(feed.get("hl") in ("en", "zh-CN")),
+                require_mongolia=bool(feed.get("require_mongolia", True)),
+                force_drug=False,
             )
 
     def _ingest_site_search(self, client: httpx.Client, feed: dict) -> None:
@@ -194,32 +195,38 @@ class SearchFeedCollector:
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")
         soup = BeautifulSoup(resp.text, "lxml")
-        # 去掉脚本
-        for tag in soup(["script", "style", "noscript"]):
+        for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
             tag.decompose()
 
+        query = (feed.get("query") or "").lower()
         candidates = []
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
             text = normalize_text(a.get_text(" ", strip=True))
-            if not text or len(text) < 8:
+            if not text or len(text) < 12:
                 continue
             full = urljoin(search_url, href)
             host = urlparse(full).netloc.lower()
-            # 只要同站文章型链接
             if not any(x in host for x in ("gogo.mn", "montsame.mn", "ikon.mn", "news.mn")):
                 continue
             path = urlparse(full).path.lower()
-            if path in ("/", "") or path.endswith(("/search", "/mn/search")):
+            if path in ("/", "") or "search" in path:
                 continue
-            if any(x in path for x in ("/login", "/tag", "/category", "/corner", "/topic")):
+            if any(x in path for x in ("/login", "/tag", "/category", "/corner", "/topic", "/author", "/#")):
                 continue
-            # ikon /n/xxx , gogo 文章, montsame 文章
-            if not any(x in path for x in ("/n/", "/r/", "/a/", "/mn/", "/en/", "/news", "/post", "/article")) and len(path) < 6:
+            # 只要文章型路径
+            article_ok = any(
+                x in path
+                for x in ("/n/", "/r/", "/a/", "/news/", "/post/", "/article/", "/mn/", "/en/")
+            )
+            if not article_ok:
+                continue
+            # 标题必须涉毒，或明确包含本轮搜索词 —— 禁止把侧边栏热搜一并入库
+            title_blob = text.lower()
+            if not is_drug_related(text, loose=True) and query not in title_blob:
                 continue
             candidates.append((text, full))
 
-        # 去重
         seen = set()
         uniq = []
         for title, url in candidates:
@@ -228,19 +235,15 @@ class SearchFeedCollector:
             seen.add(url)
             uniq.append((title, url))
 
-        for title, url in uniq[:40]:
-            # 站内搜索页：查询词本身是毒品词，结果默认收录（再排除明显无关短链）
-            if len(title) < 10:
-                self.stats["items_filtered"] += 1
-                continue
+        for title, url in uniq[:30]:
             self._save_item(
                 feed=feed,
                 title=title,
                 summary=f"{title}（关键词：{feed.get('query','')}）",
                 url=url,
                 published=None,
-                require_mongolia=False,
-                force_drug=True,
+                require_mongolia=False,  # 蒙古媒体站，地域默认成立
+                force_drug=False,  # 仍要过涉毒校验
             )
 
     def _save_item(
@@ -260,27 +263,46 @@ class SearchFeedCollector:
         body = f"{title}\n{summary}"
         body_l = body.lower()
 
-        if "内蒙古" in body and "蒙古国" not in body and "mongolia" not in body_l:
+        # —— 排除中国内蒙古等误伤 ——
+        if "内蒙古" in body and "蒙古国" not in body:
             self.stats["items_filtered"] += 1
             return
         if re.search(r"\binner mongolia\b", body_l):
-            if "ulaanbaatar" not in body_l and "蒙古国" not in body:
-                self.stats["items_filtered"] += 1
-                return
-
-        mongolia_markers = [
-            "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
-            "монгол", "蒙古国", "乌兰巴托",
-        ]
-        has_mn = any(m in body_l for m in mongolia_markers) or ("蒙古" in body and "内蒙古" not in body)
-        if require_mongolia and not has_mn:
             self.stats["items_filtered"] += 1
             return
 
+        mongolia_markers = [
+            "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
+            "монгол улс", "монгол", "蒙古国", "乌兰巴托",
+        ]
+        has_mn = any(m in body_l for m in mongolia_markers) or ("蒙古国" in body)
+
+        # 明显他国稿且无蒙古标记 → 丢弃
+        foreign_hits = [
+            "cyprus", "uzbekistan", "tajikistan", "vanuatu", "yunnan",
+            "kazakhstan", "kyrgyz", "afghanistan only",
+        ]
+        if any(f in body_l for f in foreign_hits) and not has_mn:
+            self.stats["items_filtered"] += 1
+            return
+
+        # require_mongolia：英/中谷歌源强制；蒙语谷歌源不强制标题含“蒙古”
+        # （蒙文国内稿标题常不写国名）
+        req_mn = feed.get("require_mongolia")
+        if req_mn is None:
+            req_mn = require_mongolia
+        if req_mn and not has_mn:
+            self.stats["items_filtered"] += 1
+            return
+
+        # 涉毒：标题/摘要必须命中词库（不允许仅因查询词放行）
         if not force_drug:
-            if not is_drug_related(body, loose=True) and not is_drug_related(feed.get("query", ""), loose=True):
+            if not is_drug_related(body, loose=True):
                 self.stats["items_filtered"] += 1
                 return
+        elif not is_drug_related(body, loose=True) and not is_drug_related(feed.get("query", ""), loose=True):
+            self.stats["items_filtered"] += 1
+            return
 
         item_url = url or f"search://{feed['org_name']}/{content_hash(title, feed.get('query',''), summary)[:16]}"
         if item_url in self._seen_urls:
