@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin, urldefrag, urlparse
 
 import httpx
@@ -34,10 +34,13 @@ from config.sources import SOURCES
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
+ProgressCallback = Optional[Callable[..., None]]
+
 
 class CrawlEngine:
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, on_event: ProgressCallback = None):
         self.db = db
+        self.on_event = on_event
         self.headers = {
             "User-Agent": settings.crawl_user_agent,
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
@@ -50,6 +53,14 @@ class CrawlEngine:
             "items_filtered": 0,
             "error_count": 0,
         }
+
+    def _emit(self, event_type: str, **payload: Any) -> None:
+        if not self.on_event:
+            return
+        try:
+            self.on_event(event_type, **payload)
+        except Exception:  # noqa: BLE001
+            logger.debug("progress callback failed", exc_info=True)
 
     def seed_sources(self) -> int:
         """将七大体系种子写入数据库，并保留已发现下级页面。
@@ -100,13 +111,31 @@ class CrawlEngine:
         self.db.refresh(job)
 
         try:
-            self.seed_sources()
+            self._emit(
+                "phase",
+                status="running",
+                phase="种子同步",
+                message="正在同步七大体系官方数据源种子…",
+            )
+            seeded = self.seed_sources()
+            self._emit("seeded", message=f"种子同步完成，新增 {seeded} 条", items_new=self.stats["items_new"])
+
             sources = (
                 self.db.query(Source)
                 .filter(Source.is_active.is_(True))
                 .order_by(Source.system_id, Source.id)
                 .all()
             )
+            total = len(sources)
+            self._emit(
+                "phase",
+                status="running",
+                phase="全网巡检",
+                message=f"开始巡检 {total} 个官方数据源",
+                total_sources=total,
+                current_index=0,
+            )
+
             done_urls: Set[str] = set()
             if resume and job.checkpoint:
                 try:
@@ -120,17 +149,53 @@ class CrawlEngine:
                 timeout=settings.crawl_timeout_sec,
                 follow_redirects=True,
             ) as client:
-                for src in sources:
+                for idx, src in enumerate(sources, start=1):
                     checkpoint_key = f"{src.org_name}|{src.page_url}"
                     if checkpoint_key in done_urls:
+                        self._emit(
+                            "source_skip",
+                            current_index=idx,
+                            total_sources=total,
+                            current_org=src.org_name,
+                            current_url=src.page_url,
+                            message=f"断点跳过：{src.org_name}",
+                            pages_fetched=self.stats["pages_fetched"],
+                            items_new=self.stats["items_new"],
+                            items_updated=self.stats["items_updated"],
+                            items_filtered=self.stats["items_filtered"],
+                            error_count=self.stats["error_count"],
+                        )
                         continue
-                    # 同 URL 多机构共享时，本轮只实际抓取一次页面，仍按机构入库过滤
+
+                    self._emit(
+                        "source_start",
+                        current_index=idx,
+                        total_sources=total,
+                        current_org=src.org_name,
+                        current_url=src.page_url,
+                        phase="全网巡检",
+                        message=f"[{idx}/{total}] 正在扫描：{src.org_name}",
+                        system_name=src.system_name,
+                        pages_fetched=self.stats["pages_fetched"],
+                        items_new=self.stats["items_new"],
+                        items_updated=self.stats["items_updated"],
+                        items_filtered=self.stats["items_filtered"],
+                        error_count=self.stats["error_count"],
+                    )
                     try:
                         self._crawl_source(client, src, fetched_pages=fetched_pages)
                     except Exception as exc:  # noqa: BLE001
                         self.stats["error_count"] += 1
                         src.last_status = f"error:{exc}"[:60]
                         logger.exception("爬取失败 %s: %s", src.page_url, exc)
+                        self._emit(
+                            "source_error",
+                            current_org=src.org_name,
+                            current_url=src.page_url,
+                            message=f"扫描失败：{src.org_name} — {exc}",
+                            error_count=self.stats["error_count"],
+                        )
+
                     done_urls.add(checkpoint_key)
                     job.checkpoint = json.dumps({"done": list(done_urls)[-500:]}, ensure_ascii=False)
                     job.pages_fetched = self.stats["pages_fetched"]
@@ -139,14 +204,39 @@ class CrawlEngine:
                     job.items_filtered = self.stats["items_filtered"]
                     job.error_count = self.stats["error_count"]
                     self.db.commit()
+
+                    self._emit(
+                        "source_done",
+                        current_index=idx,
+                        total_sources=total,
+                        current_org=src.org_name,
+                        current_url=src.page_url,
+                        message=f"完成：{src.org_name}｜状态 {src.last_status}",
+                        pages_fetched=self.stats["pages_fetched"],
+                        items_new=self.stats["items_new"],
+                        items_updated=self.stats["items_updated"],
+                        items_filtered=self.stats["items_filtered"],
+                        error_count=self.stats["error_count"],
+                    )
                     time.sleep(settings.crawl_request_delay_sec)
 
             job.status = "success"
             job.message = "crawl completed"
+            self._emit(
+                "crawl_complete",
+                phase="采集完成",
+                message="全网巡检采集阶段完成，进入研判…",
+                pages_fetched=self.stats["pages_fetched"],
+                items_new=self.stats["items_new"],
+                items_updated=self.stats["items_updated"],
+                items_filtered=self.stats["items_filtered"],
+                error_count=self.stats["error_count"],
+            )
         except Exception as exc:  # noqa: BLE001
             job.status = "failed"
             job.message = str(exc)
             logger.exception("全量爬取失败")
+            self._emit("error", status="failed", phase="失败", message=str(exc))
         finally:
             job.finished_at = datetime.utcnow()
             job.pages_fetched = self.stats["pages_fetched"]
@@ -275,6 +365,24 @@ class CrawlEngine:
                 if published:
                     existing.published_at = published
                 self.stats["items_updated"] += 1
+                self.db.flush()
+                self._emit(
+                    "item",
+                    item={
+                        "id": existing.id,
+                        "title": title_zh or title,
+                        "org": src.org_name,
+                        "system": src.system_name,
+                        "level": level,
+                        "category": category,
+                        "url": url,
+                        "status": "updated",
+                        "is_alert": alert,
+                    },
+                    items_updated=self.stats["items_updated"],
+                    items_new=self.stats["items_new"],
+                    message=f"更新情报：{title_zh or title}",
+                )
             else:
                 existing.is_duplicate = True
             return
@@ -302,7 +410,25 @@ class CrawlEngine:
             raw_meta=json.dumps({"source_page": src.page_url}, ensure_ascii=False),
         )
         self.db.add(item)
+        self.db.flush()
         self.stats["items_new"] += 1
+        self._emit(
+            "item",
+            item={
+                "id": item.id,
+                "title": title_zh or title,
+                "org": src.org_name,
+                "system": src.system_name,
+                "level": level,
+                "category": category,
+                "url": url,
+                "status": "new",
+                "is_alert": alert,
+            },
+            items_new=self.stats["items_new"],
+            items_updated=self.stats["items_updated"],
+            message=f"新情报入库：{title_zh or title}",
+        )
 
     def _discover_child_sources(self, src: Source, links: List[str]) -> None:
         if src.discover_depth >= settings.crawl_max_depth:
