@@ -7,6 +7,7 @@ sys.path.insert(0, str(ROOT))
 
 from app.crawler.filters import content_hash, is_allowed_url, is_drug_related, classify_category
 from config.sources import SOURCES, ALLOWED_DOMAINS
+from config.drug_lexicon import all_drug_keywords, build_search_queries
 
 
 def test_sources_cover_seven_systems():
@@ -41,3 +42,18 @@ def test_hash_stable():
 
 def test_category():
     assert classify_category("border customs seizure") == "跨境毒情"
+
+
+def test_lexicon_large():
+    keys = all_drug_keywords()
+    assert len(keys) >= 120
+    assert any("芬太尼" in k or "fentanyl" in k.lower() for k in keys)
+    assert any("мансууруулах" in k for k in keys)
+    assert any("nitazene" in k.lower() or "硝基嗪" in k for k in keys)
+
+
+def test_search_queries_built():
+    qs = build_search_queries()
+    assert len(qs) >= 30
+    assert any(q.get("engine") == "site_search" for q in qs)
+    assert any(q.get("engine") == "google_news" for q in qs)

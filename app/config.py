@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     crawl_ssl_verify: bool = False
     # 过期阈值（天）
     crawl_max_age_days: int = 3650
+    # 巡检时是否继续扫官网（搜索聚合已覆盖海量资讯；官网较慢可关）
+    enable_official_crawl: bool = False  # 默认先跑关键词搜索提速；需要时可开
 
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465

@@ -46,28 +46,45 @@ def run_intel_cycle(
     emit("phase", status="running", phase="启动", message="情报流水线已启动")
 
     if not skip_crawl:
-        # 1) 先跑搜索聚合，快速产出海量条目
+        # 1) 先跑全量关键词搜索（快、量大、可打开原文）
         if settings.enable_search_feeds:
-            emit("phase", status="running", phase="媒体搜索聚合", message="正在从新闻搜索源批量采集涉毒资讯…")
+            emit(
+                "phase",
+                status="running",
+                phase="关键词全量搜索",
+                message="正在用传统+新型毒品全量词库进行多路搜索…",
+            )
             searcher = SearchFeedCollector(db, on_event=on_event)
             result["search"] = searcher.run()
 
-        # 2) 再跑官网/媒体站点巡检
-        crawler = CrawlEngine(db, on_event=on_event)
-        job = crawler.run_full_crawl(resume=True)
-        result["crawl"] = {
-            "job_id": job.id,
-            "status": job.status,
-            "pages_fetched": job.pages_fetched,
-            "items_new": job.items_new,
-            "items_updated": job.items_updated,
-            "items_filtered": job.items_filtered,
-            "error_count": job.error_count,
-        }
-        if job.status == "failed" and not (result.get("search") or {}).get("items_new"):
-            emit("error", status="failed", phase="失败", message=job.message or "采集失败")
-            result["finished_at"] = datetime.utcnow().isoformat()
-            return result
+        # 2) 官网/媒体站点补充巡检（可关，避免拖慢）
+        if settings.enable_official_crawl:
+            emit("phase", status="running", phase="官网媒体巡检", message="正在补充扫描官方与媒体站点…")
+            # 临时降低每源页数以提速
+            old_max = settings.crawl_max_pages_per_source
+            try:
+                settings.crawl_max_pages_per_source = min(
+                    old_max, getattr(settings, "crawl_max_pages_official", 15)
+                )
+                crawler = CrawlEngine(db, on_event=on_event)
+                job = crawler.run_full_crawl(resume=True)
+            finally:
+                settings.crawl_max_pages_per_source = old_max
+            result["crawl"] = {
+                "job_id": job.id,
+                "status": job.status,
+                "pages_fetched": job.pages_fetched,
+                "items_new": job.items_new,
+                "items_updated": job.items_updated,
+                "items_filtered": job.items_filtered,
+                "error_count": job.error_count,
+            }
+            if job.status == "failed" and not (result.get("search") or {}).get("items_new"):
+                emit("error", status="failed", phase="失败", message=job.message or "采集失败")
+                result["finished_at"] = datetime.utcnow().isoformat()
+                return result
+        else:
+            result["crawl"] = {"status": "skipped"}
 
     emit("phase", status="analyzing", phase="交叉研判", message="正在生成情报研判报告…")
     analyzer = AnalysisEngine(db)

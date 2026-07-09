@@ -151,7 +151,7 @@ def _ensure_data_dir(db_url: str) -> None:
 settings = get_settings()
 _ensure_data_dir(settings.database_url)
 
-connect_args = {"check_same_thread": False} if settings.database_url.startswith("sqlite") else {}
+connect_args = {"check_same_thread": False, "timeout": 60} if settings.database_url.startswith("sqlite") else {}
 engine = create_engine(settings.database_url, connect_args=connect_args, future=True)
 
 if settings.database_url.startswith("sqlite"):
