@@ -9,6 +9,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     DateTime,
+    Float,
     Integer,
     String,
     Text,
@@ -126,6 +127,32 @@ class EmailLog(Base):
     success = Column(Boolean, default=False)
     error = Column(Text, default="")
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class StatRecord(Base):
+    """从官方新闻/PDF 抽取的结构化毒情统计点"""
+
+    __tablename__ = "stat_records"
+    __table_args__ = (
+        UniqueConstraint("fingerprint", name="uq_stat_fingerprint"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    intel_id = Column(Integer, nullable=True, index=True)
+    system_id = Column(Integer, default=9, index=True)
+    system_name = Column(String(128), default="官方统计与年报体系")
+    org_name = Column(String(256), default="")
+    source_url = Column(String(1024), default="")
+    source_type = Column(String(32), default="news_stat")  # news_stat / pdf / manual
+    title = Column(String(512), default="")
+    metric_name = Column(String(128), default="", index=True)
+    metric_value = Column(Float, default=0.0)
+    unit = Column(String(32), default="")
+    period = Column(String(64), default="", index=True)
+    raw_snippet = Column(Text, default="")
+    confidence = Column(Float, default=0.7)
+    fingerprint = Column(String(64), nullable=False, unique=True, index=True)
+    crawled_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
 class SystemSetting(Base):

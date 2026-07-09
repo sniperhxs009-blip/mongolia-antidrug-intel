@@ -13,7 +13,7 @@
       <div class="mark">禁</div>
       <div>
         <h1>蒙古国禁毒全网情报指挥台</h1>
-        <p class="sub">长期新闻监测 · 自动增量入库 · 定时研判 · 邮箱告警</p>
+        <p class="sub">长期新闻监测 · 官方统计/PDF · 自动研判 · 邮箱告警</p>
       </div>
     </div>
     <div class="top-meta">
@@ -33,6 +33,7 @@
       <div class="stat"><div class="n" id="statIntel">{{ intel_count }}</div><div class="l">情报条目</div></div>
       <div class="stat"><div class="n" id="statSources">{{ source_count }}</div><div class="l">活跃数据源</div></div>
       <div class="stat"><div class="n" id="statAlerts">{{ alert_count }}</div><div class="l">告警线索</div></div>
+      <div class="stat"><div class="n" id="statRecords">{{ stat_count }}</div><div class="l">官方统计点</div></div>
       <div class="stat"><div class="n" id="statReports">{{ report_count }}</div><div class="l">研判报告</div></div>
     </section>
 
@@ -61,7 +62,7 @@
           <button class="secondary" id="btnWeekly" onclick="startMission('weekly','full')">生成周报</button>
           <button class="secondary" id="btnMonthly" onclick="startMission('monthly','full')">生成月报</button>
         </div>
-        <p class="hint" style="margin-top:8px">系统默认按设定频率自动抓取近7天涉毒新闻；每日固定时刻再跑全量研判。本页每30秒自动刷新最新情报。</p>
+        <p class="hint" style="margin-top:8px">每小时抓最新新闻+官方统计数字；每日全量含 PDF 年报解析。本页每30秒自动刷新。</p>
 
         <div class="progress-block" id="progressBlock">
           <div class="progress-meta">
@@ -97,7 +98,7 @@
           <li class="empty">数据源加载中…</li>
           {% endfor %}
         </ul>
-        <p class="hint" style="margin-top:12px">采集范围：蒙古国官方禁毒七大体系、全国主流媒体、谷歌新闻关键词搜索聚合</p>
+        <p class="hint" style="margin-top:12px">覆盖：七大官方体系、检察院/海关/统计局/UNODC、全国媒体、PDF 报表、新闻搜索</p>
       </div>
     </section>
 
@@ -125,7 +126,30 @@
       </div>
 
       <div class="panel">
-        <div class="panel-title"><h2>研判报告</h2></div>
+        <div class="panel-title">
+          <h2>官方统计数字</h2>
+          <span class="tag">检察院 / 海关 / PDF</span>
+        </div>
+        <div class="live-intel" id="liveStats">
+          {% for s in latest_stats %}
+          <div class="intel-row" data-stat-id="{{ s.id }}">
+            <div><span class="lvl lvl-关注">{{ s.metric_name }}</span></div>
+            <div>
+              <div class="intel-title">
+                <a href="{{ s.source_url }}" target="_blank" rel="noopener">
+                  {{ s.metric_value }}{{ s.unit }}{% if s.period %} · {{ s.period }}{% endif %}
+                </a>
+              </div>
+              <div class="intel-meta">{{ s.org_name }} · {{ s.title[:60] }}</div>
+            </div>
+            <div class="hide-sm hint">{{ s.source_type }}</div>
+            <div class="hint">{{ s.crawled_at.strftime('%H:%M') if s.crawled_at else '-' }}</div>
+          </div>
+          {% else %}
+          <div class="empty" id="statsEmpty">暂无统计点。全量巡检或新闻监测后将自动抽取案件数、同比等。</div>
+          {% endfor %}
+        </div>
+        <div class="panel-title" style="margin-top:18px"><h2>研判报告</h2></div>
         <ul class="side-list" id="reportList">
           {% for r in latest_reports %}
           <li><a href="/reports/{{ r.id }}">{{ r.title }}</a><div class="hint">{{ r.report_type }} · #{{ r.id }}</div></li>
@@ -306,35 +330,65 @@
 
   let maxSeenId = Math.max(0, ...[...seenIntel]);
 
+  const seenStats = new Set([
+    {% for s in latest_stats %}{{ s.id }},{% endfor %}
+  ]);
+
+  function prependStat(s) {
+    if (!s || !s.id || seenStats.has(s.id)) return;
+    seenStats.add(s.id);
+    const box = $('liveStats');
+    const empty = $('statsEmpty');
+    if (empty) empty.remove();
+    const row = document.createElement('div');
+    row.className = 'intel-row';
+    row.dataset.statId = s.id;
+    const period = s.period ? (' · ' + s.period) : '';
+    row.innerHTML = `
+      <div><span class="lvl lvl-关注">${escapeHtml(s.metric_name || '')}</span></div>
+      <div>
+        <div class="intel-title"><a href="${escapeAttr(s.source_url || '#')}" target="_blank" rel="noopener">${escapeHtml(String(s.metric_value) + (s.unit || '') + period)}</a></div>
+        <div class="intel-meta">${escapeHtml(s.org || '')} · ${escapeHtml((s.title || '').slice(0, 60))}</div>
+      </div>
+      <div class="hide-sm hint">${escapeHtml(s.source_type || '')}</div>
+      <div class="hint">刚刚</div>`;
+    box.prepend(row);
+  }
+
   async function pollLatestIntel() {
     try {
       const url = maxSeenId > 0
         ? `/api/intel?since_id=${maxSeenId}&limit=50`
         : '/api/intel?limit=20';
       const rows = await fetch(url).then(r => r.json());
-      if (!Array.isArray(rows) || !rows.length) return;
-      // since_id 返回升序；无 since_id 返回降序，统一按 id 升序追加
-      const ordered = [...rows].sort((a, b) => a.id - b.id);
-      for (const it of ordered) {
-        if (!it.id || seenIntel.has(it.id)) continue;
-        prependIntel({
-          id: it.id,
-          title: it.title,
-          org: it.org,
-          system: it.system,
-          level: it.level,
-          category: it.category,
-          url: it.url,
-          status: 'new',
-          is_alert: it.is_alert,
-        });
-        maxSeenId = Math.max(maxSeenId, it.id);
+      if (Array.isArray(rows) && rows.length) {
+        const ordered = [...rows].sort((a, b) => a.id - b.id);
+        for (const it of ordered) {
+          if (!it.id || seenIntel.has(it.id)) continue;
+          prependIntel({
+            id: it.id,
+            title: it.title,
+            org: it.org,
+            system: it.system,
+            level: it.level,
+            category: it.category,
+            url: it.url,
+            status: 'new',
+            is_alert: it.is_alert,
+          });
+          maxSeenId = Math.max(maxSeenId, it.id);
+        }
       }
-      // 刷新统计
+      const statsRows = await fetch('/api/stat-records?limit=30').then(r => r.json());
+      if (Array.isArray(statsRows)) {
+        const orderedS = [...statsRows].sort((a, b) => a.id - b.id);
+        for (const s of orderedS) prependStat(s);
+      }
       const st = await fetch('/api/stats').then(r => r.json());
       if (st.intel_items != null) $('statIntel').textContent = st.intel_items;
       if (st.alerts != null) $('statAlerts').textContent = st.alerts;
       if (st.reports != null) $('statReports').textContent = st.reports;
+      if (st.stat_records != null) $('statRecords').textContent = st.stat_records;
     } catch (e) {}
   }
 

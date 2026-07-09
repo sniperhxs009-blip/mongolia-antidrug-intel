@@ -335,6 +335,10 @@ ALLOWED_DOMAINS = [
     "unuudur.mn", "www.unuudur.mn",
     "thediplomat.com", "www.thediplomat.com",
     "news.google.com",
+    "1212.mn", "www.1212.mn",
+    "mnb.mn", "www.mnb.mn", "news.mnb.mn",
+    "ocindex.net", "www.ocindex.net",
+    "parliament.mn", "www.parliament.mn",
 ]
 
 ALLOW_ANY_MN_DOMAIN = True

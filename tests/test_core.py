@@ -6,8 +6,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from app.crawler.filters import content_hash, is_allowed_url, is_drug_related, classify_category
+from app.crawler.stats_extract import extract_stats_from_text
 from config.sources import SOURCES, ALLOWED_DOMAINS
 from config.drug_lexicon import all_drug_keywords, build_search_queries
+from config.official_stats import OFFICIAL_STAT_SOURCES, OFFICIAL_STAT_SEARCHES, PDF_SEARCH_QUERIES
 
 
 def test_sources_cover_seven_systems():
@@ -64,3 +66,21 @@ def test_search_queries_built():
     news = build_search_queries(mode="news", when="7d")
     assert 10 <= len(news) < len(qs)
     assert any("when:7d" in (q.get("query") or "") for q in news)
+
+
+def test_official_stats_config():
+    assert len(OFFICIAL_STAT_SOURCES) >= 5
+    assert any(s["org_name"] == "总检察院" for s in OFFICIAL_STAT_SOURCES)
+    assert len(OFFICIAL_STAT_SEARCHES) >= 4
+    assert len(PDF_SEARCH_QUERIES) >= 4
+
+
+def test_stats_extract():
+    text = (
+        "Прокурорын байгууллагаас 2025 онд мансууруулах эм, сэтгэцэд нөлөөт бодисыг "
+        "хууль бусаар ашиглах 551 хэрэгт хяналт тавьсан нь өмнөх оноос 21.6 хувиар өссөн."
+    )
+    rows = extract_stats_from_text(text, source_url="https://example.mn/x", org_name="总检察院")
+    assert rows
+    assert any(r["metric_name"] == "涉毒案件数" and r["metric_value"] == 551 for r in rows)
+    assert any(r["metric_name"] == "同比增长率" for r in rows)

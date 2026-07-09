@@ -44,6 +44,8 @@ class Settings(BaseSettings):
     crawl_max_age_days: int = 3650
     # 巡检时是否继续扫官网（搜索聚合已覆盖海量资讯；官网较慢可关）
     enable_official_crawl: bool = False  # 默认先跑关键词搜索提速；需要时可开
+    # 是否采集检察院/海关/PDF 等官方统计
+    enable_official_stats: bool = True
     # 定时任务默认只抓新闻（长期监测）；每天固定时刻再跑全量研判
     crawl_mode: str = "news"  # news | full
     news_when: str = "7d"  # Google News 时间窗：1d / 7d / 30d

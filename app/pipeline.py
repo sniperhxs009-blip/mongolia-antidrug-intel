@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from app.analysis.engine import AnalysisEngine
 from app.config import get_settings
 from app.crawler.engine import CrawlEngine
+from app.crawler.official_stats import OfficialStatsCollector
 from app.crawler.search_feeds import SearchFeedCollector
 from app.db.models import IntelItem
 from app.emailer.service import EmailService
@@ -43,6 +44,7 @@ def run_intel_cycle(
         "mode": mode,
         "crawl": None,
         "search": None,
+        "official_stats": None,
         "report_id": None,
         "alerts_sent": False,
         "email_sent": False,
@@ -84,6 +86,17 @@ def run_intel_cycle(
             )
             searcher = SearchFeedCollector(db, on_event=on_event)
             result["search"] = searcher.run(mode="news" if news_only else "full")
+
+        # 官方统计 / PDF（新闻快扫也跑精简版，保证统计持续更新）
+        if settings.enable_official_stats:
+            emit(
+                "phase",
+                status="running",
+                phase="官方统计采集",
+                message="正在采集检察院/海关/UNODC 统计与 PDF 报表…",
+            )
+            stats_collector = OfficialStatsCollector(db, on_event=on_event)
+            result["official_stats"] = stats_collector.run(mode="news" if news_only else "full")
 
         if (not news_only) and settings.enable_official_crawl:
             emit("phase", status="running", phase="官网媒体巡检", message="正在补充扫描官方与媒体站点…")

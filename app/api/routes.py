@@ -13,7 +13,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 from app.config import get_settings
-from app.db.models import CrawlJob, EmailLog, IntelItem, Report, Source, SystemSetting, get_db
+from app.db.models import CrawlJob, EmailLog, IntelItem, Report, Source, StatRecord, SystemSetting, get_db
 from app.pipeline import run_intel_cycle
 from app.progress import progress_hub
 from app.scheduler.jobs import reschedule_crawl
@@ -54,8 +54,12 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     source_count = db.query(Source).filter(Source.is_active.is_(True)).count()
     report_count = db.query(Report).count()
     alert_count = db.query(IntelItem).filter(IntelItem.is_alert.is_(True)).count()
+    stat_count = db.query(StatRecord).count()
     latest_items = (
         db.query(IntelItem).order_by(IntelItem.crawled_at.desc()).limit(30).all()
+    )
+    latest_stats = (
+        db.query(StatRecord).order_by(StatRecord.crawled_at.desc()).limit(20).all()
     )
     latest_reports = db.query(Report).order_by(Report.created_at.desc()).limit(6).all()
     latest_jobs = db.query(CrawlJob).order_by(CrawlJob.started_at.desc()).limit(5).all()
@@ -74,7 +78,9 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "source_count": source_count,
             "report_count": report_count,
             "alert_count": alert_count,
+            "stat_count": stat_count,
             "latest_items": latest_items,
+            "latest_stats": latest_stats,
             "latest_reports": latest_reports,
             "latest_jobs": latest_jobs,
             "systems": systems,
@@ -97,9 +103,37 @@ def stats(db: Session = Depends(get_db)):
         "sources": db.query(Source).count(),
         "reports": db.query(Report).count(),
         "alerts": db.query(IntelItem).filter(IntelItem.is_alert.is_(True)).count(),
+        "stat_records": db.query(StatRecord).count(),
         "jobs": db.query(CrawlJob).count(),
         "emails": db.query(EmailLog).count(),
     }
+
+
+@router.get("/api/stat-records")
+def list_stat_records(db: Session = Depends(get_db), limit: int = 50):
+    rows = (
+        db.query(StatRecord)
+        .order_by(StatRecord.crawled_at.desc())
+        .limit(min(limit, 200))
+        .all()
+    )
+    return [
+        {
+            "id": r.id,
+            "metric_name": r.metric_name,
+            "metric_value": r.metric_value,
+            "unit": r.unit,
+            "period": r.period,
+            "org": r.org_name,
+            "title": r.title,
+            "source_url": r.source_url,
+            "source_type": r.source_type,
+            "snippet": r.raw_snippet,
+            "confidence": r.confidence,
+            "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
+        }
+        for r in rows
+    ]
 
 
 @router.get("/api/intel")

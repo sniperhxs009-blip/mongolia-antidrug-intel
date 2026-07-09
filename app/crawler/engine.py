@@ -30,6 +30,7 @@ from app.crawler.filters import (
 )
 from app.db.models import CrawlJob, IntelItem, Source
 from config.sources import SOURCES
+from config.official_stats import OFFICIAL_STAT_SOURCES
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -70,7 +71,8 @@ class CrawlEngine:
         """
         created = 0
         seen: Set[Tuple[str, str]] = set()
-        for s in SOURCES:
+        all_sources = list(SOURCES) + list(OFFICIAL_STAT_SOURCES)
+        for s in all_sources:
             for path in s.get("seed_paths") or ["/"]:
                 page_url = urljoin(s["base_url"].rstrip("/") + "/", path.lstrip("/"))
                 page_url = self._clean_url(page_url)
@@ -273,7 +275,7 @@ class CrawlEngine:
 
         soup = BeautifulSoup(html, "lxml")
         extra = []
-        for s in SOURCES:
+        for s in list(SOURCES) + list(OFFICIAL_STAT_SOURCES):
             if s["org_name"] == src.org_name:
                 extra = s.get("keywords_extra") or []
                 break
