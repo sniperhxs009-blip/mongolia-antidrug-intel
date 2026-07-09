@@ -123,19 +123,25 @@ class EmailService:
 
     @staticmethod
     def _wrap_html(title: str, subtitle: str, content_html: str) -> str:
+        # 网页报告用白字；邮件正文区是白底，强制深色可读
         return f"""
 <!DOCTYPE html>
-<html><head><meta charset="utf-8"/></head>
+<html><head><meta charset="utf-8"/>
+<style>
+  .mail-body, .mail-body * {{ color: #1a1a1a !important; }}
+  .mail-body a {{ color: #0b5cab !important; }}
+</style>
+</head>
 <body style="margin:0;padding:0;background:#f3f4f6">
   <div style="max-width:860px;margin:0 auto;padding:24px">
     <div style="background:#0f2744;color:#fff;padding:20px 24px;border-radius:8px 8px 0 0">
-      <div style="font-size:20px;font-weight:700">{title}</div>
-      <div style="opacity:.85;margin-top:6px;font-size:13px">{subtitle}</div>
+      <div style="font-size:20px;font-weight:700;color:#ffffff">{title}</div>
+      <div style="opacity:.85;margin-top:6px;font-size:13px;color:#ffffff">{subtitle}</div>
     </div>
-    <div style="background:#fff;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px">
+    <div class="mail-body" style="background:#fff;padding:24px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 8px 8px;color:#1a1a1a">
       {content_html}
       <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb"/>
-      <div style="font-size:12px;color:#6b7280">
+      <div style="font-size:12px;color:#6b7280 !important">
         本邮件由「蒙古国禁毒全网情报自动采集研判系统」自动发送。<br/>
         数据范围严格限定蒙古国官方禁毒体系及 UNODC 公开渠道。标注来源网址、发布时间与情报等级，请注意核验。
       </div>
