@@ -18,9 +18,17 @@ services:
       - key: CRAWL_INTERVAL
         value: every_12h
       - key: CRAWL_REQUEST_DELAY_SEC
-        value: "3"
+        value: "1.2"
       - key: ENABLE_TRANSLATION
         value: "true"
+      - key: ENABLE_SEARCH_FEEDS
+        value: "true"
+      - key: CRAWL_LOOSE_FILTER
+        value: "true"
+      - key: CRAWL_SSL_VERIFY
+        value: "false"
+      - key: CRAWL_MAX_PAGES_PER_SOURCE
+        value: "80"
       - key: TIMEZONE
         value: Asia/Ulaanbaatar
       - key: ENABLE_ALERT_EMAIL
