@@ -8,25 +8,39 @@ from __future__ import annotations
 from typing import List
 
 # ========== 中文：传统毒品 ==========
+# 依据：蒙古国主流流通清单（大麻/安纳咖/冰毒/医用阿片外流/海洛因等）
 ZH_TRADITIONAL = [
     "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒", "运毒", "藏毒", "毒资",
     "戒毒", "成瘾", "毒情", "毒枭", "毒窝", "零包贩毒", "以贩养吸",
-    "鸦片", "罂粟", "海洛因", "白粉", "吗啡", "可卡因", "古柯", "大麻", "麻烟",
-    "冰毒", "甲基苯丙胺", "摇头丸", "麻古", "K粉", "氯胺酮", "杜冷丁", "美沙酮",
-    "安非他明", "苯丙胺", "致幻剂", "LSD", "迷幻蘑菇",
-
+    "鸦片", "罂粟", "海洛因", "白粉", "吗啡", "可卡因", "古柯",
+    "大麻", "天然大麻", "黑烟草", "麻烟", "哈希什", "大麻树脂", "大麻膏", "大麻油",
+    "冰毒", "冰块", "甲基苯丙胺", "摇头丸", "麻古", "K粉", "氯胺酮", "杜冷丁", "美沙酮",
+    "安非他明", "苯丙胺", "安纳咖", "苯甲酸钠咖啡因",
+    "曲马多", "羟考酮", "可待因", "芬太尼",
+    "致幻剂", "LSD", "迷幻蘑菇", "裸盖菇素",
 ]
 
 # ========== 中文：新型毒品 / NPS ==========
+# 依据：2023-2026 蒙古国快速扩散 NPS（芬太尼/尼秦/奥芬/合成大麻素/卡西酮/派对毒/液态精神药）
 ZH_NOVEL = [
     "新型毒品", "新精神活性物质", "合成毒品", "实验室毒品", "策划药",
-    "芬太尼", "芬太尼类", "卡西酮", "合成卡西酮", "合成大麻素", "Spice", "K2",
-    "氟胺酮", "依托咪酯", "烟弹毒品", "电子烟毒品", "开心水", "丧尸药",
-    "甲卡西酮", "喵喵", "浴盐", "彩虹烟", "笑气", "一氧化二氮", "N2O",
+    "芬太尼", "芬太尼类", "芬太尼衍生物", "合成阿片",
+    "尼秦", "尼秦类", "硝基嗪", "异托尼他秦", "异硝唑啉", "甲托尼他秦",
+    "奥芬", "奥芬类", "奥芬衍生物",
+    "卡西酮", "合成卡西酮", "浴盐", "甲卡西酮", "喵喵",
+    "合成大麻素", "香料毒", "人工合成大麻素",
+    "HHC", "Delta-8", "Delta-8 THC", "Δ8-THC",
+    "雾化电子烟油", "电子烟毒品", "烟弹毒品", "草本香料",
+    "裸盖菇素", "迷幻蘑菇", "致幻蘑菇",
+    "快乐水", "派对毒品", "混合粉末", "复合毒剂", "多成分复合毒剂",
+    "液态新型精神药物", "液态精神药品", "情绪舒缓液",
+    "氟胺酮", "依托咪酯", "开心水", "丧尸药",
+    "彩虹烟", "笑气", "一氧化二氮", "N2O",
     "GHB", "迷奸水", "氟硝西泮", "三唑仑", "安眠酮",
-    "哌替啶", "曲马多", "右美沙芬滥用", "依托咪酯滥用",
+    "哌替啶", "右美沙芬滥用", "依托咪酯滥用",
     "α-PVP", "MDPV", "4-MMC", "甲氧麻黄酮",
-    "尼美西泮", "依托咪酯烟液", "合成阿片", "硝基嗪", "异托尼他秦",
+    "尼美西泮", "依托咪酯烟液",
+    "安定", "阿普唑仑", "苯二氮卓", "苯二氮䓬",
 ]
 
 # ========== 中文：易制毒 / 麻精药品 ==========
@@ -47,6 +61,10 @@ MN_KEYWORDS = [
     "опиум", "героин", "кокаин", "каннабис", "марихуан", "гашиш",
     "метамфетамин", "амфетамин", "экстази", "кетамин", "ЛСД",
     "фентанyl", "фентанил", "прекурсор", "зохицуулалттай эм",
+    "трамадол", "оксикодон", "морфин", "кодеин",
+    "нитазен", "изотонитазен", "метонитазен",
+    "синтетик каннабиноид", "псилоцибин", "катинон", "МДПВ",
+    "диазепам", "алпразолам", "бензодиазепин",
     "нөхөн сэргээх", "эмчилгээ", "хилээр нэвтрүүлэх", "контрабанд",
     "цагдаа", "гааль", "тусгай ажиллагаа", "гэмт хэрэг",
 ]
@@ -57,9 +75,12 @@ EN_TRADITIONAL = [
     "trafficking", "trafficker", "smuggling", "smuggler", "seizure", "seized",
     "interdiction", "anti-drug", "antidrug", "drug bust", "drug raid",
     "opium", "opioid", "heroin", "morphine", "cocaine", "crack cocaine",
-    "cannabis", "marijuana", "marihuana", "hashish", "weed",
-    "methamphetamine", "meth", "crystal meth", "amphetamine", "speed",
-    "MDMA", "ecstasy", "molly", "ketamine", "LSD", "psilocybin",
+    "cannabis", "marijuana", "marihuana", "hashish", "hash", "weed",
+    "cannabis oil", "cannabis resin",
+    "methamphetamine", "meth", "crystal meth", "ice", "amphetamine", "speed",
+    "caffeine sodium benzoate", "sodium benzoate caffeine", "annaka",
+    "tramadol", "oxycodone", "codeine",
+    "MDMA", "ecstasy", "molly", "ketamine", "LSD", "psilocybin", "magic mushroom",
     "addiction", "addict", "rehabilitation", "rehab", "overdose",
 ]
 
@@ -67,10 +88,15 @@ EN_TRADITIONAL = [
 EN_NOVEL = [
     "new psychoactive substance", "NPS", "designer drug", "research chemical",
     "synthetic cannabinoid", "spice", "K2", "synthetic cathinone", "bath salts",
-    "fentanyl", "fentanyl analogue", "carfentanil", "nitazene", "isotonitazene",
-    "protonitazene", "metonitazene", "xylazine", "tranq", "tranq dope",
+    "HHC", "hexahydrocannabinol", "Delta-8", "Delta-8 THC", "delta-8-THC",
+    "fentanyl", "fentanyl analogue", "fentanyl derivative", "carfentanil",
+    "nitazene", "isotonitazene", "protonitazene", "metonitazene",
+    "orfina", "orphine", "oripavine",
+    "xylazine", "tranq", "tranq dope",
     "mephedrone", "4-MMC", "methylone", "MDPV", "alpha-PVP", "flakka",
+    "party drug", "happy water", "mixed powder", "liquid NPS", "liquid psychoactive",
     "GHB", "GBL", "1,4-butanediol", "Rohypnol", "flunitrazepam",
+    "diazepam", "alprazolam", "benzodiazepine",
     "nitrous oxide", "laughing gas", "whippets",
     "etomidate", "etomidate vape", "synthetic opioid",
     "2C-B", "NBOMe", "25I-NBOMe", "DMT", "kratom", "kava",
@@ -89,7 +115,9 @@ EN_PRECURSOR = [
 RU_KEYWORDS = [
     "наркотик", "наркотиков", "наркотики", "наркомания", "наркоторговец",
     "контрабанда", "изъятие", "прекурсор", "героин", "кокаин", "каннабис",
-    "марихуана", "метамфетамин", "амфетамин", "экстази", "фентанил",
+    "марихуана", "гашиш", "метамфетамин", "амфетамин", "экстази", "фентанил",
+    "нитазен", "изотонитазен", "трамадол", "оксикодон", "псилоцибин",
+    "синтетический каннабиноид", "катинон", "МДПВ", "бензодиазепин",
     "синтетический", "психоактивн", "реабилитация",
 ]
 
@@ -126,9 +154,16 @@ def build_search_queries() -> List[dict]:
         "метамфетамин",
         "героин",
         "каннабис",
+        "гашиш",
         "кокаин",
         "кетамин",
         "фентанил",
+        "нитазен",
+        "изотонитазен",
+        "синтетик каннабиноид",
+        "псилоцибин",
+        "катинон",
+        "трамадол",
         "синтетик мансууруулах",
         "прекурсор",
         "баривчилгаа мансууруулах",
@@ -152,13 +187,19 @@ def build_search_queries() -> List[dict]:
     # —— 英语：蒙古 + 明确毒品品名（不用裸 drug/trafficking）——
     en_drug_groups = [
         "narcotic OR \"illegal drug\" OR \"illicit drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
-        "methamphetamine OR \"crystal meth\"",
+        "methamphetamine OR \"crystal meth\" OR \"ice meth\"",
         "heroin OR opium",
-        "cannabis OR marijuana OR hashish",
+        "cannabis OR marijuana OR hashish OR \"cannabis oil\"",
+        "\"caffeine sodium benzoate\" OR annaka",
         "cocaine",
-        "fentanyl OR nitazene OR xylazine",
+        "tramadol OR oxycodone OR morphine OR codeine",
+        "fentanyl OR \"fentanyl analogue\" OR nitazene OR isotonitazene OR metonitazene",
+        "HHC OR \"Delta-8\" OR \"synthetic cannabinoid\" OR spice OR K2",
+        "psilocybin OR \"magic mushroom\"",
+        "MDPV OR \"bath salts\" OR cathinone OR mephedrone",
         "ketamine OR MDMA OR ecstasy",
-        "\"synthetic cannabinoid\" OR \"designer drug\" OR NPS",
+        "diazepam OR alprazolam OR benzodiazepine",
+        "\"designer drug\" OR NPS OR \"liquid NPS\" OR \"party drug\"",
         "precursor OR ephedrine OR pseudoephedrine",
         "\"drug seizure\" OR \"drugs seized\" OR \"drug bust\"",
     ]
@@ -178,8 +219,15 @@ def build_search_queries() -> List[dict]:
     # —— 中文：蒙古国 + 毒品 ——
     zh_groups = [
         "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
-        "冰毒 OR 海洛因 OR 大麻 OR 可卡因",
-        "芬太尼 OR 氯胺酮 OR 摇头丸 OR 新型毒品",
+        "冰毒 OR 冰块 OR 海洛因 OR 大麻 OR 黑烟草 OR 可卡因",
+        "安纳咖 OR 苯甲酸钠咖啡因",
+        "曲马多 OR 羟考酮 OR 吗啡 OR 可待因",
+        "芬太尼 OR 尼秦 OR 异托尼他秦 OR 奥芬",
+        "合成大麻素 OR 香料毒 OR HHC OR Delta-8",
+        "裸盖菇素 OR 迷幻蘑菇 OR 卡西酮 OR 浴盐 OR MDPV",
+        "快乐水 OR 派对毒品 OR 液态新型精神药物 OR 情绪舒缓液",
+        "安定 OR 阿普唑仑 OR 苯二氮卓",
+        "氯胺酮 OR 摇头丸 OR 新型毒品",
         "易制毒 OR 麻精 OR 制毒",
         "口岸查获 OR 跨境贩毒 OR 走私毒品",
     ]
@@ -203,6 +251,8 @@ def build_search_queries() -> List[dict]:
         "метамфетамин",
         "героин",
         "каннабис",
+        "фентанил",
+        "нитазен",
         "баривчилгаа",
     ]
     site_engines = [
@@ -243,7 +293,9 @@ def build_search_queries() -> List[dict]:
 # 告警级关键词（命中即提高等级）
 ALERT_KEYWORDS = [
     "专项行动", "跨境缉毒", "口岸严查", "大规模查获", "缉毒大案",
-    "fentanyl", "nitazene", "xylazine", "seizure", "seized",
-    "баривчилгаа", "тусгай ажиллагаа", "фентанил", "метамфетамин",
-    "芬太尼", "冰毒", "海洛因", "合成大麻", "易制毒",
+    "fentanyl", "nitazene", "isotonitazene", "metonitazene", "xylazine",
+    "seizure", "seized",
+    "баривчилгаа", "тусгай ажиллагаа", "фентанил", "метамфетамин", "нитазен",
+    "芬太尼", "尼秦", "异托尼他秦", "奥芬", "冰毒", "冰块", "海洛因",
+    "安纳咖", "合成大麻素", "香料毒", "快乐水", "液态新型精神药物", "易制毒",
 ]

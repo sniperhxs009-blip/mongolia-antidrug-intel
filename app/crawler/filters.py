@@ -21,20 +21,28 @@ BLOCKED_SUFFIXES = (
 STRONG_DRUG_TERMS = [
     # 中文
     "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒", "运毒", "戒毒",
-    "海洛因", "可卡因", "冰毒", "大麻", "鸦片", "罂粟", "芬太尼", "氯胺酮",
+    "海洛因", "可卡因", "冰毒", "冰块", "大麻", "黑烟草", "哈希什", "鸦片", "罂粟",
+    "安纳咖", "苯甲酸钠咖啡因", "曲马多", "羟考酮", "可待因",
+    "芬太尼", "尼秦", "异托尼他秦", "甲托尼他秦", "奥芬", "氯胺酮",
+    "合成大麻素", "香料毒", "裸盖菇素", "迷幻蘑菇", "卡西酮", "浴盐",
+    "快乐水", "派对毒品", "液态新型精神药物", "情绪舒缓液",
+    "安定", "阿普唑仑", "苯二氮卓",
     "摇头丸", "K粉", "麻古", "易制毒", "麻精药品", "合成毒品", "新型毒品",
     "毒枭", "毒贩", "查获毒品", "走私毒品",
     # 蒙语
     "мансууруулах", "хар тамхи", "наркотик", "героин", "кокаин", "каннабис",
     "метамфетамин", "амфетамин", "кетамин", "фентанил", "экстази", "прекурсор",
-    "донтсон", "марихуан", "гашиш", "опиум",
+    "донтсон", "марихуан", "гашиш", "опиум", "нитазен", "изотонитазен",
+    "трамадол", "псилоцибин", "катинон",
     # 英语强词
     "narcotic", "narcotics", "heroin", "cocaine", "methamphetamine", "meth ",
     " cannabis", "marijuana", "hashish", "fentanyl", "ketamine", "mdma",
     "ecstasy", "opium", "opioid", "precursor", "anti-drug", "antidrug",
     "drug bust", "drug raid", "drug smugg", "drug traffick", "drug seizure",
     "seized drug", "illegal drug", "illicit drug", "controlled substance",
-    "synthetic cannabinoid", "nitazene", "xylazine", "bath salt",
+    "synthetic cannabinoid", "nitazene", "isotonitazene", "metonitazene",
+    "xylazine", "bath salt", "psilocybin", "tramadol", "oxycodone",
+    "hhc", "delta-8", "mdpv", "annaka", "caffeine sodium benzoate",
     "psychotropic", "мансууруулах бодис",
 ]
 
