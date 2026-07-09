@@ -374,10 +374,31 @@ th {
   letter-spacing: 1px;
 }
 
-.report { color: #dbe7f5; line-height: 1.7; }
-.report h1, .report h2, .report h3 { color: var(--cyan); font-family: Orbitron, "Noto Sans SC", sans-serif; }
+.report,
+.report * {
+  color: #ffffff !important;
+  line-height: 1.7;
+}
+.report a,
+.report a:hover {
+  color: #7dd3fc !important;
+  text-decoration: underline;
+}
+.report h1, .report h2, .report h3 {
+  color: #ffffff !important;
+  font-family: Orbitron, "Noto Sans SC", sans-serif;
+}
 .report h1 { font-size: 18px; }
-.report h2 { font-size: 15px; border-bottom: 1px solid var(--line); padding-bottom: 6px; }
+.report h2 {
+  font-size: 15px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+  padding-bottom: 6px;
+}
+.report hr { border-color: rgba(255, 255, 255, 0.25); }
+.report strong, .report b { color: #ffffff !important; font-weight: 700; }
+.report p, .report div, .report li, .report span {
+  color: #ffffff !important;
+}
 
 .empty {
   color: var(--muted);

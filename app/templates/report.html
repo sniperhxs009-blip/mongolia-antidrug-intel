@@ -5,6 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
   <title>研判报告 - {{ report.title }}</title>
   <link rel="stylesheet" href="/static/style.css"/>
+  <style>
+    /* 强制报告页全文白色，覆盖历史内联深色样式 */
+    .report, .report * { color: #ffffff !important; }
+    .report a, .report a:hover { color: #7dd3fc !important; }
+  </style>
 </head>
 <body>
 <div class="shell">

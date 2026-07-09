@@ -311,25 +311,31 @@ class AnalysisEngine:
 
         escaped = html_lib.escape(md)
         lines = escaped.split("\n")
-        out = ["<div style='font-family:Segoe UI,Arial,sans-serif;line-height:1.6;color:#1a1a1a'>"]
+        out = [
+            "<div class='report-body' "
+            "style='font-family:Segoe UI,Noto Sans SC,Arial,sans-serif;line-height:1.7;color:#ffffff'>"
+        ]
         for line in lines:
             if line.startswith("# "):
-                out.append(f"<h1>{line[2:]}</h1>")
+                out.append(f"<h1 style='color:#ffffff'>{line[2:]}</h1>")
             elif line.startswith("## "):
-                out.append(f"<h2 style='border-bottom:1px solid #ccc;padding-bottom:4px'>{line[3:]}</h2>")
+                out.append(
+                    f"<h2 style='color:#ffffff;border-bottom:1px solid rgba(255,255,255,.25);"
+                    f"padding-bottom:4px'>{line[3:]}</h2>"
+                )
             elif line.startswith("### "):
-                out.append(f"<h3>{line[4:]}</h3>")
+                out.append(f"<h3 style='color:#ffffff'>{line[4:]}</h3>")
             elif line.startswith("- "):
-                out.append(f"<div>• {line[2:]}</div>")
+                out.append(f"<div style='color:#ffffff'>• {line[2:]}</div>")
             elif re.match(r"\d+\. ", line):
-                out.append(f"<div>{line}</div>")
+                out.append(f"<div style='color:#ffffff'>{line}</div>")
             elif line.strip() == "---":
-                out.append("<hr/>")
+                out.append("<hr style='border-color:rgba(255,255,255,.25)'/>")
             elif line.strip() == "":
                 out.append("<br/>")
             else:
                 # 粗体 ** **
-                line2 = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", line)
-                out.append(f"<p>{line2}</p>")
+                line2 = re.sub(r"\*\*(.+?)\*\*", r"<strong style='color:#ffffff'>\1</strong>", line)
+                out.append(f"<p style='color:#ffffff'>{line2}</p>")
         out.append("</div>")
         return "\n".join(out)
