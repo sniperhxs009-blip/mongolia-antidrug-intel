@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="mark">MN</div>
+      <div>
+        <h1>{{ app_name }}</h1>
+        <p>仅采集蒙古国官方禁毒体系 · 自动抓取 · 交叉研判 · 邮箱推送</p>
+      </div>
+    </div>
+    <nav>
+      <a href="/">控制台</a>
+      <a href="/sources">数据源</a>
+      <a href="/api/health">健康检查</a>
+      <a href="/docs">API文档</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <section class="stats">
+      <div class="stat"><div class="n">{{ intel_count }}</div><div class="l">情报条目</div></div>
+      <div class="stat"><div class="n">{{ source_count }}</div><div class="l">活跃数据源</div></div>
+      <div class="stat"><div class="n">{{ alert_count }}</div><div class="l">告警线索</div></div>
+      <div class="stat"><div class="n">{{ report_count }}</div><div class="l">研判报告</div></div>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h2>任务控制</h2>
+        <p>当前巡检间隔：<strong>{{ crawl_interval }}</strong>｜邮箱：{% if email_configured %}已配置{% else %}未配置（请设置 SMTP 环境变量）{% endif %}</p>
+        <form class="row" method="post" action="/api/schedule">
+          <select name="interval">
+            <option value="hourly" {% if crawl_interval=='hourly' %}selected{% endif %}>每小时</option>
+            <option value="every_6h" {% if crawl_interval=='every_6h' %}selected{% endif %}>每6小时</option>
+            <option value="every_12h" {% if crawl_interval=='every_12h' %}selected{% endif %}>每12小时</option>
+            <option value="daily" {% if crawl_interval=='daily' %}selected{% endif %}>每日</option>
+          </select>
+          <button type="submit">更新定时</button>
+        </form>
+        <div class="row" style="margin-top:12px">
+          <button onclick="runCrawl('daily')">立即全网巡检+日报告</button>
+          <button class="secondary" onclick="runCrawl('weekly')">生成周报</button>
+          <button class="secondary" onclick="runCrawl('monthly')">生成月报</button>
+        </div>
+        <p id="msg" class="msg"></p>
+      </div>
+
+      <div class="panel">
+        <h2>七大体系覆盖</h2>
+        <ul class="sys">
+          {% for sid, sname in systems %}
+          <li><span class="badge">{{ sid }}</span> {{ sname }}</li>
+          {% else %}
+          <li>启动后自动写入种子数据源…</li>
+          {% endfor %}
+        </ul>
+        <p class="hint">UTC 时间：{{ now.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>最新情报</h2>
+      <table>
+        <thead>
+          <tr><th>等级</th><th>标题</th><th>机构</th><th>类别</th><th>采集时间</th></tr>
+        </thead>
+        <tbody>
+          {% for it in latest_items %}
+          <tr>
+            <td><span class="lvl lvl-{{ it.intel_level }}">{{ it.intel_level }}</span></td>
+            <td><a href="{{ it.url }}" target="_blank" rel="noopener">{{ it.title_zh or it.title }}</a></td>
+            <td>{{ it.org_name }}</td>
+            <td>{{ it.category }}</td>
+            <td>{{ it.crawled_at.strftime('%Y-%m-%d %H:%M') if it.crawled_at else '-' }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5">暂无数据。点击「立即全网巡检」开始采集。</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+
+    <section class="grid-2">
+      <div class="panel">
+        <h2>最新研判报告</h2>
+        <ul>
+          {% for r in latest_reports %}
+          <li><a href="/reports/{{ r.id }}">{{ r.title }}</a> <span class="hint">{{ r.report_type }}</span></li>
+          {% else %}
+          <li>暂无报告</li>
+          {% endfor %}
+        </ul>
+      </div>
+      <div class="panel">
+        <h2>最近爬取任务</h2>
+        <ul>
+          {% for j in latest_jobs %}
+          <li>#{{ j.id }} {{ j.status }}｜新{{ j.items_new }} 更{{ j.items_updated }} 滤{{ j.items_filtered }} 错{{ j.error_count }}</li>
+          {% else %}
+          <li>暂无任务</li>
+          {% endfor %}
+        </ul>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    async function runCrawl(type) {
+      const msg = document.getElementById('msg');
+      msg.textContent = '任务已提交，后台执行中…';
+      const res = await fetch('/api/crawl/run?report_type=' + type, { method: 'POST' });
+      const data = await res.json();
+      msg.textContent = '已启动：' + JSON.stringify(data) + '（稍后刷新查看结果）';
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>{{ report.title }}</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="mark">MN</div>
+      <div>
+        <h1>{{ app_name }}</h1>
+        <p>情报研判正式报告</p>
+      </div>
+    </div>
+    <nav><a href="/">返回控制台</a></nav>
+  </header>
+  <main class="wrap">
+    <article class="panel report">
+      {{ report.content_html | safe }}
+    </article>
+  </main>
+</body>
+</html>

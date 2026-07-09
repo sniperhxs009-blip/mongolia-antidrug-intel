@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>数据源清单 - {{ app_name }}</title>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <div class="mark">MN</div>
+      <div>
+        <h1>数据源自动更新清单</h1>
+        <p>七大体系种子 + 递归发现的下级栏目</p>
+      </div>
+    </div>
+    <nav><a href="/">返回控制台</a></nav>
+  </header>
+  <main class="wrap">
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>体系</th><th>机构</th><th>URL</th><th>种子</th><th>深度</th><th>状态</th><th>最近爬取</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for s in sources %}
+          <tr>
+            <td>{{ s.system_id }}. {{ s.system_name }}</td>
+            <td>{{ s.org_name }}</td>
+            <td><a href="{{ s.page_url }}" target="_blank" rel="noopener">{{ s.page_url }}</a></td>
+            <td>{{ '是' if s.is_seed else '发现' }}</td>
+            <td>{{ s.discover_depth }}</td>
+            <td>{{ s.last_status }}</td>
+            <td>{{ s.last_crawled_at.strftime('%Y-%m-%d %H:%M') if s.last_crawled_at else '-' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </main>
+</body>
+</html>

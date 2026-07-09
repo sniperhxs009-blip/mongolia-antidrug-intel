@@ -1,0 +1,47 @@
+services:
+  - type: web
+    name: mongolia-antidrug-intel
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    disk:
+      name: intel-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
+      - key: DATABASE_URL
+        value: sqlite:////var/data/intel.db
+      - key: CRAWL_INTERVAL
+        value: every_12h
+      - key: CRAWL_REQUEST_DELAY_SEC
+        value: "3"
+      - key: ENABLE_TRANSLATION
+        value: "true"
+      - key: TIMEZONE
+        value: Asia/Ulaanbaatar
+      - key: ENABLE_ALERT_EMAIL
+        value: "true"
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "465"
+      - key: SMTP_USE_SSL
+        value: "true"
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+      - key: EMAIL_DAILY_BRIEF_HOUR
+        value: "8"
+      - key: EMAIL_DAILY_BRIEF_MINUTE
+        value: "0"
+      - key: SECRET_KEY
+        generateValue: true
