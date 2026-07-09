@@ -32,6 +32,17 @@ def test_drug_filter():
     assert not is_drug_related("Two Seasons Dining Facility Mongolian BBQ")
     assert not is_drug_related("combat human trafficking in Mongolia")
     assert not is_drug_related("Russian medicine for hepatitis tax-free in Mongolia")
+    assert not is_drug_related("Buryatia customs seized Mongolian cigarettes smuggling")
+    assert not is_drug_related("2500 rounds of ammunition smuggled into Mongolia")
+    assert not is_drug_related("Mongolian citizen detained for smuggling weight-loss pills")
+
+
+def test_mongolia_country():
+    from app.crawler.filters import is_mongolia_country_related
+    assert is_mongolia_country_related("Mongolia police seized methamphetamine in Ulaanbaatar")
+    assert not is_mongolia_country_related("Ulan-Ude resident caught with cannabis in Buryatia")
+    assert not is_mongolia_country_related("Afghanistan opium production down 93 percent UNODC")
+    assert is_mongolia_country_related("蒙古国海关查获冰毒")
 
 
 def test_url_allowlist():

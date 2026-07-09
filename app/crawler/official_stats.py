@@ -216,6 +216,12 @@ class OfficialStatsCollector:
             if not is_drug_related(body, loose=False):
                 self.stats["items_filtered"] += 1
                 continue
+            # 官方统计新闻也必须与蒙古国相关（排除 UNODC 阿富汗/中国全球稿）
+            from app.crawler.filters import is_mongolia_country_related
+
+            if not is_mongolia_country_related(body):
+                self.stats["items_filtered"] += 1
+                continue
             # 统计类优先：含数字或统计词
             if not re.search(
                 r"\d|статистик|хувь|өс|бүртгэгд|хэрэг|seizure|percent|%|案件|同比|查获",

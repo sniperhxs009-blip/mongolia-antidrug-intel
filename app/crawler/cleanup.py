@@ -6,31 +6,20 @@ from typing import Dict
 
 from sqlalchemy.orm import Session
 
-from app.crawler.filters import is_drug_related
-from app.db.models import IntelItem
-
-MONGOLIA_MARKERS = [
-    "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
-    "монгол", "蒙古国", "乌兰巴托",
-]
-
-
-def is_mongolia_related(text: str) -> bool:
-    t = text or ""
-    tl = t.lower()
-    if "内蒙古" in t and "蒙古国" not in t:
-        return False
-    if re.search(r"\binner mongolia\b", tl):
-        return False
-    if any(m in tl for m in MONGOLIA_MARKERS):
-        return True
-    return "蒙古国" in t
+from app.crawler.filters import is_drug_related, is_mongolia_country_related
+from app.db.models import IntelItem, StatRecord
 
 
 def is_from_mn_media(item: IntelItem) -> bool:
     url = (item.url or "").lower()
     org = item.org_name or ""
-    if any(d in url for d in ("gogo.mn", "montsame.mn", "ikon.mn", "news.mn", "police.gov.mn", "gov.mn")):
+    if any(
+        d in url
+        for d in (
+            "gogo.mn", "montsame.mn", "ikon.mn", "news.mn",
+            "police.gov.mn", "gov.mn", "prosecutor.mn", "customs.gov.mn",
+        )
+    ):
         return True
     return "站内搜索" in org
 
@@ -51,11 +40,26 @@ def purge_irrelevant_items(db: Session) -> Dict[str, int]:
             ]
         )
         drug_ok = is_drug_related(blob, loose=False)
-        mn_ok = is_mongolia_related(blob) or is_from_mn_media(it)
+        mn_ok = is_mongolia_country_related(blob) or is_from_mn_media(it)
+        # 蒙古媒体站内稿也必须真正涉毒
+        if is_from_mn_media(it) and not drug_ok:
+            db.delete(it)
+            deleted += 1
+            continue
         if not drug_ok or not mn_ok:
             db.delete(it)
             deleted += 1
             continue
         kept += 1
+
+    # 同步清理无蒙古语境的统计点
+    for st in db.query(StatRecord).all():
+        blob = " ".join([st.title or "", st.raw_snippet or "", st.org_name or ""])
+        if not is_mongolia_country_related(blob) and "蒙古" not in (st.org_name or ""):
+            # UNODC 全球稿无蒙古 → 删
+            if "mongolia" not in blob.lower() and "монгол" not in blob.lower() and "蒙古" not in blob:
+                db.delete(st)
+                deleted += 1
+
     db.commit()
     return {"deleted": deleted, "kept": kept, "scanned": len(rows)}

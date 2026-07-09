@@ -21,6 +21,7 @@ from app.crawler.filters import (
     is_allowed_url,
     is_critical,
     is_drug_related,
+    is_mongolia_country_related,
     normalize_text,
     translate_to_zh,
 )
@@ -277,35 +278,47 @@ class SearchFeedCollector:
         body = f"{title}\n{summary}"
         body_l = body.lower()
 
-        # —— 排除中国内蒙古等误伤 ——
+        # —— 排除中国内蒙古 / 俄布里亚特乌兰乌德等误伤 ——
+        if not is_mongolia_country_related(body) and require_mongolia:
+            # 蒙语国内媒体站内搜不强制国名，见下方 req_mn
+            pass
         if "内蒙古" in body and "蒙古国" not in body:
             self.stats["items_filtered"] += 1
             return
         if re.search(r"\binner mongolia\b", body_l):
             self.stats["items_filtered"] += 1
             return
+        # 布里亚特/乌兰乌德本地案（香烟、弹药、本地大麻）一律丢弃
+        if re.search(
+            r"улан[- ]?удэ|ulan[- ]?ude|buryat|бурят|乌兰乌德|布里亚特",
+            body_l,
+            flags=re.I,
+        ):
+            if not re.search(r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс", body_l, flags=re.I):
+                self.stats["items_filtered"] += 1
+                return
 
         mongolia_markers = [
             "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
             "монгол улс", "монгол", "蒙古国", "乌兰巴托",
         ]
-        has_mn = any(m in body_l for m in mongolia_markers) or ("蒙古国" in body)
+        has_mn = is_mongolia_country_related(body) or any(m in body_l for m in mongolia_markers)
 
-        # 明显他国稿且无蒙古标记 → 丢弃
+        # 明显他国稿且无蒙古标记 → 丢弃（含阿富汗/中国制毒但未提蒙古）
         foreign_hits = [
             "cyprus", "uzbekistan", "tajikistan", "vanuatu", "yunnan",
-            "kazakhstan", "kyrgyz", "afghanistan only",
+            "kazakhstan", "kyrgyz", "afghanistan", "china/afghanistan",
+            "афганистан",
         ]
         if any(f in body_l for f in foreign_hits) and not has_mn:
             self.stats["items_filtered"] += 1
             return
 
-        # require_mongolia：英/中谷歌源强制；蒙语谷歌源不强制标题含“蒙古”
-        # （蒙文国内稿标题常不写国名）
+        # require_mongolia：英/中/俄语谷歌源强制；蒙语谷歌源不强制标题含“蒙古”
         req_mn = feed.get("require_mongolia")
         if req_mn is None:
             req_mn = require_mongolia
-        if req_mn and not has_mn:
+        if req_mn and not is_mongolia_country_related(body):
             self.stats["items_filtered"] += 1
             return
 

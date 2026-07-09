@@ -53,7 +53,7 @@ WEAK_DRUG_TERMS = [
     "overdose", "баривчилгаа", "хураан авсан",
 ]
 
-# 明确排除：医药、人口贩运、餐饮、文体、艺术等
+# 明确排除：香烟/弹药/减肥药/人口贩运/医药/餐饮/文体等（非毒品）
 NEGATIVE_PATTERNS = [
     r"\bmongolia\s*grill\b",
     r"\bmongolian\s*bbq\b",
@@ -79,16 +79,55 @@ NEGATIVE_PATTERNS = [
     r"human\s+traffick",
     r"sex\s+traffick",
     r"people\s+traffick",
+    r"illegal\s+trafficking\s+of\s+people",
     r"anti[- ]?corruption",
     r"orphanage",
     r"asset\s+recover",
     r"low[- ]priced\s+stock",
     r"stock\s+market",
     r"coal\s+mine",
+    r"煤矿",
+    r"低价股",
+    r"股票",
+    r"股市",
+    r"financial\s+post",
     r"rape\b",
+    # 香烟 / 烟草（非毒品）
+    r"\bcigarette",
+    r"\btobacco\b",
+    r"\bsmokes?\b",
+    r"сигарет",
+    r"табак",
+    r"香烟",
+    r"卷烟",
+    r"烟草",
+    # 普通烟草（排除 хар тамхи 毒品义）
+    r"(?<!хар )тамхи",
+    r"(?<!хар\u00a0)тамхи",
+    # 弹药 / 武器走私
+    r"\bammunition\b",
+    r"\bammo\b",
+    r"\bcartridge",
+    r"патрон",
+    r"боеприпас",
+    r"弹药",
+    r"子弹",
+    # 减肥药 / 普通药品走私
+    r"weight[- ]?loss",
+    r"diet\s+pill",
+    r"slim(ming)?\s+pill",
+    r"减肥药",
+    r"похуден",
+    # 人口贩运 / 无关社会
     r"人口贩运",
     r"拐卖",
     r"反腐败",
+    r"unesco",
+    r"kindergarten",
+    r"early\s+screening",
+    r"preventive\s+check",
+    r"abortion",
+    r"pregnancy\s+aid",
     r"奥运会",
     r"金牌",
     r"烤肉",
@@ -96,7 +135,14 @@ NEGATIVE_PATTERNS = [
     r"画作",
     r"肝炎",
     r"药品免税",
-    r"хүн\s*худалдах",  # human trafficking mn
+    r"хүн\s*худалдах",
+    # 俄罗斯布里亚特/乌兰乌德本地案（非蒙古国）
+    r"улан[- ]?удэ",
+    r"ulan[- ]?ude",
+    r"buryat",
+    r"бурят",
+    r"乌兰乌德",
+    r"布里亚特",
 ]
 
 
@@ -183,8 +229,15 @@ def is_drug_related(text: str, extra_keywords: Optional[list] = None, loose: boo
         if kw.lower().strip() in blob:
             return True
 
-    # 2) 词库中的具体品名（跳过过于宽泛的 drug/trafficking）
-    skip_broad = {"drug", "drugs", "trafficking", "trafficker", "smuggling", "smuggler", "seizure", "seized"}
+    # 2) 词库中的具体品名（跳过过于宽泛的执法/走私通用词）
+    skip_broad = {
+        "drug", "drugs", "trafficking", "trafficker", "smuggling", "smuggler",
+        "seizure", "seized", "addiction", "addict", "rehab", "rehabilitation",
+        "overdose", "контрабанда", "контрабанд", "баривчилгаа", "хураан авсан",
+        "цагдаа", "гааль", "гэмт хэрэг", "урьдчилан сэргийлэх", "нөхөн сэргээх",
+        "эмчилгээ", "хилээр нэвтрүүлэх", "донтсон", "донтлох", "донтлол",
+        "зохицуулалттай эм", "тамхины бодис",
+    }
     keys = list(DRUG_KEYWORDS)
     if extra_keywords:
         keys.extend(extra_keywords)
@@ -224,6 +277,45 @@ def is_critical(text: str, extra: Optional[list] = None) -> bool:
     for kw in keys:
         if kw.lower() in blob:
             return True
+    return False
+
+
+def is_mongolia_country_related(text: str) -> bool:
+    """判定是否指向蒙古国（排除内蒙古、乌兰乌德/布里亚特等）。"""
+    t = text or ""
+    tl = t.lower()
+    if "内蒙古" in t and "蒙古国" not in t:
+        return False
+    if re.search(r"\binner mongolia\b", tl):
+        return False
+    # 俄罗斯乌兰乌德 / 布里亚特本地新闻
+    if re.search(
+        r"улан[- ]?удэ|ulan[- ]?ude|buryat|бурят|乌兰乌德|布里亚特",
+        tl,
+        flags=re.I,
+    ):
+        if not re.search(
+            r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс|mongolia\s+police|mongolia\s+customs",
+            tl,
+            flags=re.I,
+        ):
+            return False
+    markers = [
+        "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
+        "монгол улс", "蒙古国", "乌兰巴托",
+    ]
+    if any(m in tl for m in markers) or "蒙古国" in t:
+        return True
+    # 中文「蒙古」但非「内蒙古」：常见于「蒙古警方/海关/外交/船只」
+    if re.search(r"(?<!内)蒙古", t):
+        return True
+    # 单独「монгол」过宽，需搭配毒品语境
+    if "монгол" in tl and re.search(
+        r"мансууруулах|хар\s*тамхи|наркотик|метамфетамин|фентанил|героин",
+        tl,
+        flags=re.I,
+    ):
+        return True
     return False
 
 
