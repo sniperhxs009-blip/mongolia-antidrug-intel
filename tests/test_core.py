@@ -11,7 +11,8 @@ from config.sources import SOURCES, ALLOWED_DOMAINS
 
 def test_sources_cover_seven_systems():
     ids = {s["system_id"] for s in SOURCES}
-    assert ids == {1, 2, 3, 4, 5, 6, 7}
+    assert {1, 2, 3, 4, 5, 6, 7}.issubset(ids)
+    assert 8 in ids  # 媒体与公开资讯
 
 
 def test_allowed_domains_not_empty():

@@ -3,17 +3,17 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>SOURCE MATRIX // {{ app_name }}</title>
+  <title>数据源清单 - {{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
 <div class="shell">
   <header class="topbar">
     <div class="brand">
-      <div class="mark">MN</div>
+      <div class="mark">禁</div>
       <div>
-        <h1>SOURCE MATRIX // 数据源矩阵</h1>
-        <p class="sub">SEED NODES + AUTO-DISCOVERED SUBORDINATE CHANNELS</p>
+        <h1>数据源清单</h1>
+        <p class="sub">七大官方体系 + 全国媒体 + 自动发现下级栏目</p>
       </div>
     </div>
     <nav><a href="/">返回指挥台</a></nav>
@@ -21,13 +21,13 @@
   <main class="wrap">
     <section class="panel">
       <div class="panel-title">
-        <h2>ACTIVE COLLECTION NODES</h2>
-        <span class="tag">{{ sources|length }} NODES</span>
+        <h2>采集节点</h2>
+        <span class="tag">共 {{ sources|length }} 个</span>
       </div>
       <table>
         <thead>
           <tr>
-            <th>SYSTEM</th><th>ORG</th><th>URL</th><th>SEED</th><th>DEPTH</th><th>STATUS</th><th>LAST</th>
+            <th>体系</th><th>机构</th><th>网址</th><th>类型</th><th>深度</th><th>状态</th><th>最近采集</th>
           </tr>
         </thead>
         <tbody>
@@ -36,7 +36,7 @@
             <td>{{ s.system_id }}. {{ s.system_name }}</td>
             <td>{{ s.org_name }}</td>
             <td><a href="{{ s.page_url }}" target="_blank" rel="noopener">{{ s.page_url }}</a></td>
-            <td>{{ 'SEED' if s.is_seed else 'DISC' }}</td>
+            <td>{{ '种子' if s.is_seed else '发现' }}</td>
             <td>{{ s.discover_depth }}</td>
             <td>{{ s.last_status }}</td>
             <td>{{ s.last_crawled_at.strftime('%Y-%m-%d %H:%M') if s.last_crawled_at else '-' }}</td>

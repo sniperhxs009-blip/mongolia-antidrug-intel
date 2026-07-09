@@ -3,53 +3,53 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>MN-INTEL // {{ app_name }}</title>
+  <title>{{ app_name }}</title>
   <link rel="stylesheet" href="/static/style.css"/>
 </head>
 <body>
 <div class="shell">
   <header class="topbar">
     <div class="brand">
-      <div class="mark">MN</div>
+      <div class="mark">禁</div>
       <div>
-        <h1>MONGOLIA ANTI-DRUG INTEL COMMAND</h1>
-        <p class="sub">CLASSIFIED OPEN-SOURCE MONITORING · OFFICIAL SOURCES ONLY · SEVEN SYSTEMS</p>
+        <h1>蒙古国禁毒全网情报指挥台</h1>
+        <p class="sub">官方七大体系 · 全国媒体 · 搜索聚合 · 自动研判 · 邮箱推送</p>
       </div>
     </div>
     <div class="top-meta">
-      <span><span id="statusDot" class="live-dot"></span><span id="statusText">SYSTEM NOMINAL</span></span>
+      <span><span id="statusDot" class="live-dot"></span><span id="statusText">系统待命</span></span>
       <span id="clock">UTC --:--:--</span>
       <nav>
         <a class="active" href="/">指挥台</a>
         <a href="/sources">数据源</a>
-        <a href="/docs">API</a>
-        <a href="/api/health">健康</a>
+        <a href="/docs">接口文档</a>
+        <a href="/api/health">健康检查</a>
       </nav>
     </div>
   </header>
 
   <main class="wrap">
     <section class="stats">
-      <div class="stat"><div class="n" id="statIntel">{{ intel_count }}</div><div class="l">INTEL RECORDS</div></div>
-      <div class="stat"><div class="n" id="statSources">{{ source_count }}</div><div class="l">ACTIVE SOURCES</div></div>
-      <div class="stat"><div class="n" id="statAlerts">{{ alert_count }}</div><div class="l">ALERT SIGNALS</div></div>
-      <div class="stat"><div class="n" id="statReports">{{ report_count }}</div><div class="l">ASSESSMENTS</div></div>
+      <div class="stat"><div class="n" id="statIntel">{{ intel_count }}</div><div class="l">情报条目</div></div>
+      <div class="stat"><div class="n" id="statSources">{{ source_count }}</div><div class="l">活跃数据源</div></div>
+      <div class="stat"><div class="n" id="statAlerts">{{ alert_count }}</div><div class="l">告警线索</div></div>
+      <div class="stat"><div class="n" id="statReports">{{ report_count }}</div><div class="l">研判报告</div></div>
     </section>
 
     <section class="hud-grid">
       <div class="panel" style="position:relative">
         <div class="scanline"></div>
         <div class="panel-title">
-          <h2>MISSION CONTROL // 任务控制</h2>
-          <span class="tag">INTERVAL {{ crawl_interval }} · MAIL {% if email_configured %}ONLINE{% else %}OFFLINE{% endif %}</span>
+          <h2>任务控制</h2>
+          <span class="tag">巡检间隔：{{ crawl_interval }} · 邮箱：{% if email_configured %}已配置{% else %}未配置{% endif %}</span>
         </div>
 
         <form class="ops-row" method="post" action="/api/schedule">
           <select name="interval">
-            <option value="hourly" {% if crawl_interval=='hourly' %}selected{% endif %}>HOURLY / 每小时</option>
-            <option value="every_6h" {% if crawl_interval=='every_6h' %}selected{% endif %}>EVERY 6H / 每6小时</option>
-            <option value="every_12h" {% if crawl_interval=='every_12h' %}selected{% endif %}>EVERY 12H / 每12小时</option>
-            <option value="daily" {% if crawl_interval=='daily' %}selected{% endif %}>DAILY / 每日</option>
+            <option value="hourly" {% if crawl_interval=='hourly' %}selected{% endif %}>每小时</option>
+            <option value="every_6h" {% if crawl_interval=='every_6h' %}selected{% endif %}>每6小时</option>
+            <option value="every_12h" {% if crawl_interval=='every_12h' %}selected{% endif %}>每12小时</option>
+            <option value="daily" {% if crawl_interval=='daily' %}selected{% endif %}>每日</option>
           </select>
           <button type="submit" class="secondary">更新定时</button>
         </form>
@@ -62,47 +62,47 @@
 
         <div class="progress-block" id="progressBlock">
           <div class="progress-meta">
-            <span>PHASE <strong id="phaseLabel">STANDBY</strong></span>
-            <span>PROGRESS <strong id="pctLabel">0%</strong></span>
-            <span>NEW <strong id="newLabel">0</strong> · UPD <strong id="updLabel">0</strong> · PAGE <strong id="pageLabel">0</strong></span>
+            <span>阶段 <strong id="phaseLabel">待命</strong></span>
+            <span>进度 <strong id="pctLabel">0%</strong></span>
+            <span>新增 <strong id="newLabel">0</strong> · 更新 <strong id="updLabel">0</strong> · 页面 <strong id="pageLabel">0</strong></span>
           </div>
           <div class="bar"><span id="barFill"></span></div>
-          <div class="phase-line" id="phaseMsg">待命。点击「立即全网巡检 + 日报告」启动七大体系全网扫描。</div>
+          <div class="phase-line" id="phaseMsg">待命。点击「立即全网巡检 + 日报告」开始采集蒙古国涉毒新闻、通知、通告与数据。</div>
           <div class="phase-line" style="margin-top:4px;font-size:12px;color:var(--muted)">
-            TARGET: <span class="org" id="currentOrg">—</span>
+            当前目标：<span class="org" id="currentOrg">—</span>
           </div>
         </div>
 
         <div class="panel-title" style="margin-top:16px">
-          <h2>LIVE EVENT STREAM // 实时事件流</h2>
-          <span class="tag" id="runIdTag">RUN —</span>
+          <h2>实时事件流</h2>
+          <span class="tag" id="runIdTag">任务编号 —</span>
         </div>
         <div class="feed" id="eventFeed">
-          <div class="empty">NO ACTIVE STREAM · AWAITING MISSION</div>
+          <div class="empty">暂无事件。启动巡检后将实时滚动显示。</div>
         </div>
       </div>
 
       <div class="panel">
         <div class="panel-title">
-          <h2>COVERAGE MATRIX // 七大体系</h2>
-          <span class="tag">OFFICIAL ONLY</span>
+          <h2>覆盖体系</h2>
+          <span class="tag">官方 + 媒体 + 搜索</span>
         </div>
         <ul class="sys-list">
           {% for sid, sname in systems %}
           <li><span class="badge">{{ sid }}</span><span>{{ sname }}</span></li>
           {% else %}
-          <li class="empty">种子数据源加载中…</li>
+          <li class="empty">数据源加载中…</li>
           {% endfor %}
         </ul>
-        <p class="hint" style="margin-top:12px">SCOPE LOCK: Mongolia official anti-drug ecosystem + UNODC public channels</p>
+        <p class="hint" style="margin-top:12px">采集范围：蒙古国官方禁毒七大体系、全国主流媒体、谷歌新闻关键词搜索聚合</p>
       </div>
     </section>
 
     <section class="hud-grid">
       <div class="panel">
         <div class="panel-title">
-          <h2>LIVE INTEL FEED // 实时情报入库</h2>
-          <span class="tag">ONE-BY-ONE DISPLAY</span>
+          <h2>实时情报入库</h2>
+          <span class="tag">每出一条显示一条</span>
         </div>
         <div class="live-intel" id="liveIntel">
           {% for it in latest_items %}
@@ -122,7 +122,7 @@
       </div>
 
       <div class="panel">
-        <div class="panel-title"><h2>ASSESSMENTS // 研判报告</h2></div>
+        <div class="panel-title"><h2>研判报告</h2></div>
         <ul class="side-list" id="reportList">
           {% for r in latest_reports %}
           <li><a href="/reports/{{ r.id }}">{{ r.title }}</a><div class="hint">{{ r.report_type }} · #{{ r.id }}</div></li>
@@ -130,10 +130,10 @@
           <li class="empty">暂无报告</li>
           {% endfor %}
         </ul>
-        <div class="panel-title" style="margin-top:18px"><h2>RECENT JOBS // 任务记录</h2></div>
+        <div class="panel-title" style="margin-top:18px"><h2>最近任务</h2></div>
         <ul class="side-list">
           {% for j in latest_jobs %}
-          <li>#{{ j.id }} {{ j.status }} · NEW {{ j.items_new }} · UPD {{ j.items_updated }} · ERR {{ j.error_count }}</li>
+          <li>#{{ j.id }} {{ j.status }} · 新增 {{ j.items_new }} · 更新 {{ j.items_updated }} · 错误 {{ j.error_count }}</li>
           {% else %}
           <li class="empty">暂无任务</li>
           {% endfor %}
@@ -148,7 +148,6 @@
     {% for it in latest_items %}{{ it.id }},{% endfor %}
   ]);
   let es = null;
-  let currentRun = null;
 
   function $(id) { return document.getElementById(id); }
 
@@ -158,16 +157,16 @@
     const txt = $('statusText');
     if (busy) {
       dot.className = 'live-dot busy';
-      txt.textContent = 'MISSION ACTIVE';
+      txt.textContent = '巡检进行中';
     } else {
       dot.className = 'live-dot';
-      txt.textContent = 'SYSTEM NOMINAL';
+      txt.textContent = '系统待命';
     }
   }
 
   function updateProgress(p) {
     if (!p) return;
-    $('phaseLabel').textContent = (p.phase || '—').toUpperCase();
+    $('phaseLabel').textContent = p.phase || '—';
     $('pctLabel').textContent = (p.percent || 0) + '%';
     $('barFill').style.width = (p.percent || 0) + '%';
     $('newLabel').textContent = p.items_new ?? 0;
@@ -192,10 +191,9 @@
     }
     row.className = cls;
     const ts = (evt.ts || '').slice(11, 19) || '--:--:--';
-    const msg = evt.message || evt.type;
-    row.innerHTML = `<div class="t">${ts}</div><div class="m">${escapeHtml(msg)}</div>`;
+    row.innerHTML = `<div class="t">${ts}</div><div class="m">${escapeHtml(evt.message || evt.type)}</div>`;
     feed.prepend(row);
-    while (feed.children.length > 120) feed.removeChild(feed.lastChild);
+    while (feed.children.length > 150) feed.removeChild(feed.lastChild);
   }
 
   function prependIntel(item) {
@@ -215,7 +213,7 @@
         <div class="intel-meta">${escapeHtml(item.org || '')} · ${escapeHtml(item.category || '')} · ${item.status || 'new'}</div>
       </div>
       <div class="hide-sm hint">${escapeHtml(item.system || '')}</div>
-      <div class="hint">LIVE</div>`;
+      <div class="hint">刚刚</div>`;
     box.prepend(row);
     const n = $('statIntel');
     n.textContent = String(Number(n.textContent || '0') + 1);
@@ -233,7 +231,7 @@
       if (r.error) return;
       if (list.querySelector('.empty')) list.innerHTML = '';
       const li = document.createElement('li');
-      li.innerHTML = `<a href="/reports/${reportId}">${escapeHtml(r.title || ('Report #' + reportId))}</a><div class="hint">${escapeHtml(r.type || '')} · #${reportId}</div>`;
+      li.innerHTML = `<a href="/reports/${reportId}">${escapeHtml(r.title || ('报告 #' + reportId))}</a><div class="hint">${escapeHtml(r.type || '')} · #${reportId}</div>`;
       list.prepend(li);
       const n = $('statReports');
       n.textContent = String(Number(n.textContent || '0') + 1);
@@ -251,8 +249,7 @@
 
   function openStream(runId) {
     closeStream();
-    currentRun = runId;
-    $('runIdTag').textContent = 'RUN ' + runId;
+    $('runIdTag').textContent = '任务编号 ' + runId;
     es = new EventSource('/api/crawl/stream?run_id=' + encodeURIComponent(runId));
     es.onmessage = (ev) => {
       let data;
@@ -260,14 +257,12 @@
       if (data.progress) updateProgress(data.progress);
       if (data.type === 'event' && data.event) {
         pushEvent(data.event);
-        if (data.event.type === 'item' && data.event.item) {
-          prependIntel(data.event.item);
-        }
+        if (data.event.type === 'item' && data.event.item) prependIntel(data.event.item);
         if (data.event.type === 'done' || data.event.type === 'error') {
           setBusy(false);
           if (data.event.type === 'error') {
             $('statusDot').className = 'live-dot err';
-            $('statusText').textContent = 'MISSION FAILED';
+            $('statusText').textContent = '任务失败';
           }
         }
       }
@@ -276,21 +271,18 @@
         closeStream();
       }
     };
-    es.onerror = () => {
-      // 浏览器会自动重连；任务结束后由 closed 关闭
-    };
   }
 
   async function startMission(type) {
     setBusy(true);
     $('eventFeed').innerHTML = '';
-    pushEvent({ ts: new Date().toISOString(), type: 'queued', message: '正在下达巡检指令…' });
+    pushEvent({ ts: new Date().toISOString(), type: 'queued', message: '正在启动全网巡检…' });
     updateProgress({ phase: '排队中', percent: 1, message: '任务提交中…', items_new: 0, items_updated: 0, pages_fetched: 0 });
     try {
       const res = await fetch('/api/crawl/run?report_type=' + encodeURIComponent(type), { method: 'POST' });
       const data = await res.json();
       if (res.status === 409 && data.run_id) {
-        pushEvent({ ts: new Date().toISOString(), type: 'warn', message: '已有任务运行中，接入现有进度流…' });
+        pushEvent({ ts: new Date().toISOString(), type: 'warn', message: '已有任务运行中，接入现有进度…' });
         openStream(data.run_id);
         if (data.progress) updateProgress(data.progress);
         return;
@@ -301,18 +293,16 @@
       setBusy(false);
       pushEvent({ ts: new Date().toISOString(), type: 'error', message: '启动失败：' + e.message });
       $('statusDot').className = 'live-dot err';
-      $('statusText').textContent = 'COMMAND ERROR';
+      $('statusText').textContent = '启动失败';
     }
   }
 
   function tickClock() {
-    const d = new Date();
-    $('clock').textContent = 'UTC ' + d.toISOString().slice(11, 19);
+    $('clock').textContent = 'UTC ' + new Date().toISOString().slice(11, 19);
   }
   tickClock();
   setInterval(tickClock, 1000);
 
-  // 页面加载时若有进行中任务，自动接入
   (async () => {
     try {
       const s = await fetch('/api/crawl/status').then(r => r.json());

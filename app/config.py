@@ -24,16 +24,23 @@ class Settings(BaseSettings):
 
     database_url: str = "sqlite:///./data/intel.db"
 
-    crawl_interval: str = "daily"  # hourly | every_6h | every_12h | daily
-    crawl_request_delay_sec: float = 2.5
-    crawl_max_pages_per_source: int = 40
+    crawl_interval: str = "every_12h"  # hourly | every_6h | every_12h | daily
+    crawl_request_delay_sec: float = 1.2
+    crawl_max_pages_per_source: int = 80
     crawl_user_agent: str = (
-        "Mozilla/5.0 (compatible; MN-AntiDrug-IntelBot/1.0; "
-        "+https://github.com/mongolia-antidrug-intel)"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
-    crawl_timeout_sec: int = 25
+    crawl_timeout_sec: int = 35
     crawl_max_depth: int = 3
     enable_translation: bool = True
+    enable_search_feeds: bool = True
+    # 官网采集时是否使用宽松相关判定
+    crawl_loose_filter: bool = True
+    # SSL 异常站点仍尝试抓取
+    crawl_ssl_verify: bool = False
+    # 过期阈值（天）
+    crawl_max_age_days: int = 3650
 
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465

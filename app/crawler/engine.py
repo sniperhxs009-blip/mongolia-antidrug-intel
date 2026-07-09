@@ -148,6 +148,7 @@ class CrawlEngine:
                 headers=self.headers,
                 timeout=settings.crawl_timeout_sec,
                 follow_redirects=True,
+                verify=settings.crawl_ssl_verify,
             ) as client:
                 for idx, src in enumerate(sources, start=1):
                     checkpoint_key = f"{src.org_name}|{src.page_url}"
@@ -281,8 +282,18 @@ class CrawlEngine:
         links = self._extract_links(soup, src.page_url, src.base_url)
         self._discover_child_sources(src, links)
 
-        article_links = [u for u in links if self._looks_like_article(u)][: settings.crawl_max_pages_per_source]
-        candidates = [src.page_url] + article_links
+        article_links = [u for u in links if self._looks_like_article(u)]
+        if self._is_media_source(src) and len(article_links) < 15:
+            # 媒体站文章 URL 不规则时，扩大候选
+            article_links = links[: settings.crawl_max_pages_per_source]
+        # 去重保序
+        seen_c: Set[str] = set()
+        ordered: List[str] = []
+        for u in [src.page_url] + article_links:
+            if u not in seen_c:
+                seen_c.add(u)
+                ordered.append(u)
+        candidates = ordered[: settings.crawl_max_pages_per_source]
 
         for url in candidates:
             if not is_allowed_url(url):
@@ -324,12 +335,12 @@ class CrawlEngine:
         summary = content[:400]
         blob = f"{title}\n{summary}\n{content}"
 
-        if not is_drug_related(blob, extra_keywords):
+        if not is_drug_related(blob, extra_keywords, loose=settings.crawl_loose_filter):
             self.stats["items_filtered"] += 1
             return
 
         published = parse_date_guess(blob) or parse_date_guess(html[:5000])
-        if is_stale(published, max_days=540):
+        if is_stale(published, max_days=settings.crawl_max_age_days):
             self.stats["items_filtered"] += 1
             return
 
@@ -505,8 +516,11 @@ class CrawlEngine:
                 continue
             if not is_allowed_url(full):
                 continue
-            if not same_host_or_sub(full, base_url) and "unodc.org" not in urlparse(full).netloc:
-                continue
+            # 媒体/搜索落地允许跨站；官网优先同域
+            host = urlparse(full).netloc.lower()
+            if not same_host_or_sub(full, base_url):
+                if not (host.endswith(".mn") or "unodc.org" in host or "news.google.com" in host):
+                    continue
             seen.add(full)
             out.append(full)
         return out
@@ -517,10 +531,15 @@ class CrawlEngine:
         return url.rstrip("/")
 
     @staticmethod
+    def _is_media_source(src: Source) -> bool:
+        return (src.system_id == 8) or ("媒体" in (src.system_name or ""))
+
+    @staticmethod
     def _looks_like_article(url: str) -> bool:
         low = url.lower()
         hints = [
             "news", "info", "press", "article", "detail", "view", "post",
-            "announcement", "report", "мэдээ", "id=", "content",
+            "announcement", "report", "мэдээ", "id=", "content", "/n/",
+            "story", "media", "zar", "p/", "a/",
         ]
         return any(h in low for h in hints)
