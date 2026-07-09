@@ -23,7 +23,7 @@ templates = Jinja2Templates(directory="app/templates")
 settings = get_settings()
 
 
-def _run_cycle_with_progress(run_id: str, report_type: str = "daily") -> None:
+def _run_cycle_with_progress(run_id: str, report_type: str = "daily", mode: str = "full") -> None:
     from app.db.models import SessionLocal
 
     prog = progress_hub.get(run_id)
@@ -35,7 +35,13 @@ def _run_cycle_with_progress(run_id: str, report_type: str = "daily") -> None:
 
     db = SessionLocal()
     try:
-        run_intel_cycle(db, report_type=report_type, send_email=True, on_event=on_event)
+        run_intel_cycle(
+            db,
+            report_type=report_type,
+            send_email=(mode == "full"),
+            on_event=on_event,
+            mode=mode,
+        )
     except Exception as exc:  # noqa: BLE001
         prog.emit("error", status="failed", phase="失败", message=str(exc))
     finally:
@@ -102,13 +108,24 @@ def list_intel(
     limit: int = 50,
     system_id: Optional[int] = None,
     alert_only: bool = False,
+    since_id: Optional[int] = None,
 ):
     q = db.query(IntelItem).order_by(IntelItem.crawled_at.desc())
     if system_id:
         q = q.filter(IntelItem.system_id == system_id)
     if alert_only:
         q = q.filter(IntelItem.is_alert.is_(True))
-    rows = q.limit(min(limit, 200)).all()
+    if since_id:
+        # 增量拉取：只返回比 since_id 更新的条目（按 id 升序便于前端追加）
+        rows = (
+            db.query(IntelItem)
+            .filter(IntelItem.id > since_id)
+            .order_by(IntelItem.id.asc())
+            .limit(min(limit, 200))
+            .all()
+        )
+    else:
+        rows = q.limit(min(limit, 200)).all()
     return [
         {
             "id": r.id,
@@ -184,6 +201,10 @@ def purge_intel(db: Session = Depends(get_db)):
 
     result = purge_irrelevant_items(db)
     return {"status": "ok", **result}
+
+
+@router.get("/api/crawl/status")
+def crawl_status(run_id: Optional[str] = None):
     prog = progress_hub.get(run_id) if run_id else progress_hub.current()
     if not prog:
         return {"status": "idle", "busy": False}
@@ -193,7 +214,10 @@ def purge_intel(db: Session = Depends(get_db)):
 
 
 @router.post("/api/crawl/run")
-def trigger_crawl(report_type: str = "daily"):
+def trigger_crawl(report_type: str = "daily", mode: str = "full"):
+    """mode=news：仅抓最新新闻（快）；mode=full：新闻+研判报告。"""
+    if mode not in ("news", "full"):
+        mode = "full"
     if progress_hub.is_busy():
         cur = progress_hub.current()
         return JSONResponse(
@@ -208,12 +232,12 @@ def trigger_crawl(report_type: str = "daily"):
     prog = progress_hub.create(report_type=report_type)
     t = threading.Thread(
         target=_run_cycle_with_progress,
-        args=(prog.run_id, report_type),
+        args=(prog.run_id, report_type, mode),
         daemon=True,
         name=f"crawl-{prog.run_id}",
     )
     t.start()
-    return {"status": "started", "report_type": report_type, "run_id": prog.run_id}
+    return {"status": "started", "report_type": report_type, "mode": mode, "run_id": prog.run_id}
 
 
 @router.get("/api/crawl/stream")
@@ -280,7 +304,7 @@ def crawl_stream(run_id: Optional[str] = None):
 
 @router.post("/api/schedule")
 def update_schedule(interval: str = Form(...)):
-    if interval not in ("hourly", "every_6h", "every_12h", "daily"):
+    if interval not in ("every_30m", "hourly", "every_6h", "every_12h", "daily"):
         return JSONResponse({"error": "invalid interval"}, status_code=400)
     reschedule_crawl(interval)
     from app.db.models import SessionLocal

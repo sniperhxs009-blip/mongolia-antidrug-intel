@@ -297,8 +297,8 @@ SOURCES = [
     },
 ]
 
-# 由词库动态生成搜索任务
-SEARCH_FEEDS = build_search_queries()
+# 由词库动态生成搜索任务（全量）；新闻快扫在运行时按 mode 重建
+SEARCH_FEEDS = build_search_queries(mode="full")
 
 DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS

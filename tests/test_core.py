@@ -57,7 +57,10 @@ def test_lexicon_large():
 
 
 def test_search_queries_built():
-    qs = build_search_queries()
+    qs = build_search_queries(mode="full")
     assert len(qs) >= 30
     assert any(q.get("engine") == "site_search" for q in qs)
     assert any(q.get("engine") == "google_news" for q in qs)
+    news = build_search_queries(mode="news", when="7d")
+    assert 10 <= len(news) < len(qs)
+    assert any("when:7d" in (q.get("query") or "") for q in news)

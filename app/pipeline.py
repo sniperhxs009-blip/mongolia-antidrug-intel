@@ -26,7 +26,11 @@ def run_intel_cycle(
     send_email: bool = True,
     skip_crawl: bool = False,
     on_event: ProgressCallback = None,
+    mode: str = "full",
 ) -> Dict[str, Any]:
+    """mode=news：只抓最新新闻（适合高频监测）；mode=full：新闻+研判+邮件。"""
+    news_only = mode == "news"
+
     def emit(event_type: str, **payload: Any) -> None:
         if on_event:
             try:
@@ -36,6 +40,7 @@ def run_intel_cycle(
 
     result: Dict[str, Any] = {
         "started_at": datetime.utcnow().isoformat(),
+        "mode": mode,
         "crawl": None,
         "search": None,
         "report_id": None,
@@ -43,38 +48,45 @@ def run_intel_cycle(
         "email_sent": False,
     }
 
-    emit("phase", status="running", phase="启动", message="情报流水线已启动")
+    emit(
+        "phase",
+        status="running",
+        phase="启动",
+        message="新闻监测已启动" if news_only else "情报流水线已启动",
+    )
 
     if not skip_crawl:
-        # 0) 先清理历史脏数据（非蒙古 / 非涉毒）
-        try:
-            from app.crawler.cleanup import purge_irrelevant_items
+        # 全量模式才做全库清洗；新闻快扫跳过，避免拖慢
+        if not news_only:
+            try:
+                from app.crawler.cleanup import purge_irrelevant_items
 
-            purged = purge_irrelevant_items(db)
-            emit(
-                "phase",
-                status="running",
-                phase="数据清洗",
-                message=f"已清理无关条目 {purged.get('deleted', 0)} 条，保留 {purged.get('kept', 0)} 条",
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("cleanup failed: %s", exc)
+                purged = purge_irrelevant_items(db)
+                emit(
+                    "phase",
+                    status="running",
+                    phase="数据清洗",
+                    message=f"已清理无关条目 {purged.get('deleted', 0)} 条，保留 {purged.get('kept', 0)} 条",
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("cleanup failed: %s", exc)
 
-        # 1) 先跑全量关键词搜索（快、量大、可打开原文）
         if settings.enable_search_feeds:
             emit(
                 "phase",
                 status="running",
-                phase="关键词全量搜索",
-                message="正在用传统+新型毒品全量词库进行多路搜索…",
+                phase="最新新闻监测" if news_only else "关键词全量搜索",
+                message=(
+                    "正在抓取蒙古国涉毒最新新闻（when:7d 优先）…"
+                    if news_only
+                    else "正在用传统+新型毒品全量词库进行多路搜索…"
+                ),
             )
             searcher = SearchFeedCollector(db, on_event=on_event)
-            result["search"] = searcher.run()
+            result["search"] = searcher.run(mode="news" if news_only else "full")
 
-        # 2) 官网/媒体站点补充巡检（可关，避免拖慢）
-        if settings.enable_official_crawl:
+        if (not news_only) and settings.enable_official_crawl:
             emit("phase", status="running", phase="官网媒体巡检", message="正在补充扫描官方与媒体站点…")
-            # 临时降低每源页数以提速
             old_max = settings.crawl_max_pages_per_source
             try:
                 settings.crawl_max_pages_per_source = min(
@@ -99,6 +111,42 @@ def run_intel_cycle(
                 return result
         else:
             result["crawl"] = {"status": "skipped"}
+
+    new_count = (result.get("search") or {}).get("items_new", 0) + (result.get("crawl") or {}).get("items_new", 0)
+    upd_count = (result.get("search") or {}).get("items_updated", 0) + (result.get("crawl") or {}).get("items_updated", 0)
+
+    # 新闻快扫：不生成报告、不发日简报；仅对新告警发邮件
+    if news_only:
+        mailer = EmailService(db)
+        since = datetime.utcnow() - timedelta(hours=3)
+        alert_items = (
+            db.query(IntelItem)
+            .filter(IntelItem.is_alert.is_(True))
+            .filter(IntelItem.crawled_at >= since)
+            .filter(IntelItem.status == "new")
+            .order_by(IntelItem.crawled_at.desc())
+            .all()
+        )
+        if alert_items and settings.enable_alert_email and send_email:
+            emit("phase", status="emailing", phase="紧急告警", message=f"新告警 {len(alert_items)} 条，正在推送…")
+            analyzer = AnalysisEngine(db)
+            alert_report = analyzer.generate_report(report_type="alert", days=1)
+            result["alerts_sent"] = mailer.send_alert(alert_items, alert_report)
+            result["report_id"] = alert_report.id
+
+        result["finished_at"] = datetime.utcnow().isoformat()
+        emit(
+            "done",
+            status="success",
+            phase="完成",
+            report_id=result.get("report_id"),
+            message=f"新闻监测完成：新增 {new_count}，更新 {upd_count}",
+            items_new=new_count,
+            items_updated=upd_count,
+            pages_fetched=0,
+            error_count=(result.get("search") or {}).get("error_count", 0),
+        )
+        return result
 
     emit("phase", status="analyzing", phase="交叉研判", message="正在生成情报研判报告…")
     analyzer = AnalysisEngine(db)
@@ -134,8 +182,6 @@ def run_intel_cycle(
         else:
             result["email_sent"] = mailer.send_report(report, kind=report_type)
 
-    new_count = (result.get("search") or {}).get("items_new", 0) + (result.get("crawl") or {}).get("items_new", 0)
-    upd_count = (result.get("search") or {}).get("items_updated", 0) + (result.get("crawl") or {}).get("items_updated", 0)
     result["finished_at"] = datetime.utcnow().isoformat()
     emit(
         "done",

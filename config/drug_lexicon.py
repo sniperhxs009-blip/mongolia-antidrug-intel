@@ -143,12 +143,17 @@ def all_drug_keywords() -> List[str]:
 
 
 # 搜索查询模板：每条都会带 Mongolia / монгол 约束
-def build_search_queries() -> List[dict]:
-    """生成多语种、多毒品类别的搜索任务。"""
+def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
+    """生成多语种、多毒品类别的搜索任务。
+    mode=news：精简高频监测任务（更快）；mode=full：全量覆盖。
+    when：Google News 时间窗，如 7d / 1d（会追加 when:Xd）。
+    """
     tasks: List[dict] = []
+    news_mode = mode == "news"
+    when_suffix = f" when:{when}" if when else ""
 
     # —— 蒙语核心 ——
-    mn_cores = [
+    mn_cores_full = [
         "мансууруулах бодис",
         "хар тамхи",
         "метамфетамин",
@@ -170,22 +175,33 @@ def build_search_queries() -> List[dict]:
         "гааль мансууруулах",
         "цагдаа хар тамхи",
     ]
-    for q in mn_cores:
+    mn_cores_news = [
+        "мансууруулах бодис",
+        "хар тамхи",
+        "метамфетамин",
+        "фентанил",
+        "нитазен",
+        "каннабис",
+        "героин",
+        "баривчилгаа мансууруулах",
+        "гааль мансууруулах",
+    ]
+    for q in (mn_cores_news if news_mode else mn_cores_full):
         tasks.append({
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"搜索·蒙语·{q[:18]}",
-            # 强制带上蒙古国约束，避免串入他国俄语/国际新闻
-            "query": f"Монгол ({q})",
+            "query": f"Монгол ({q}){when_suffix}",
             "hl": "mn",
             "gl": "mn",
             "ceid": "MN:mn",
             "engine": "google_news",
-            "require_mongolia": False,  # 蒙文国内稿标题常不写国名；靠查询词 Монгол + 涉毒词
+            "require_mongolia": False,
+            "tier": "news" if news_mode else "full",
         })
 
-    # —— 英语：蒙古 + 明确毒品品名（不用裸 drug/trafficking）——
-    en_drug_groups = [
+    # —— 英语：蒙古 + 明确毒品品名 ——
+    en_full = [
         "narcotic OR \"illegal drug\" OR \"illicit drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
         "methamphetamine OR \"crystal meth\" OR \"ice meth\"",
         "heroin OR opium",
@@ -203,21 +219,30 @@ def build_search_queries() -> List[dict]:
         "precursor OR ephedrine OR pseudoephedrine",
         "\"drug seizure\" OR \"drugs seized\" OR \"drug bust\"",
     ]
-    for g in en_drug_groups:
+    en_news = [
+        "narcotic OR \"illegal drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
+        "methamphetamine OR \"crystal meth\"",
+        "fentanyl OR nitazene OR isotonitazene",
+        "cannabis OR marijuana OR \"synthetic cannabinoid\"",
+        "heroin OR ketamine OR MDMA",
+        "\"drug seizure\" OR \"drug bust\" OR \"drugs seized\"",
+    ]
+    for g in (en_news if news_mode else en_full):
         tasks.append({
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"搜索·英语·{g.split(' OR ')[0].replace(chr(34),'')[:16]}",
-            "query": f"Mongolia ({g})",
+            "query": f"Mongolia ({g}){when_suffix}",
             "hl": "en",
             "gl": "us",
             "ceid": "US:en",
             "engine": "google_news",
             "require_mongolia": True,
+            "tier": "news" if news_mode else "full",
         })
 
     # —— 中文：蒙古国 + 毒品 ——
-    zh_groups = [
+    zh_full = [
         "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
         "冰毒 OR 冰块 OR 海洛因 OR 大麻 OR 黑烟草 OR 可卡因",
         "安纳咖 OR 苯甲酸钠咖啡因",
@@ -231,21 +256,28 @@ def build_search_queries() -> List[dict]:
         "易制毒 OR 麻精 OR 制毒",
         "口岸查获 OR 跨境贩毒 OR 走私毒品",
     ]
-    for g in zh_groups:
+    zh_news = [
+        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
+        "冰毒 OR 芬太尼 OR 尼秦 OR 海洛因 OR 大麻",
+        "合成大麻素 OR 安纳咖 OR 氯胺酮",
+        "口岸查获 OR 跨境贩毒 OR 走私毒品",
+    ]
+    for g in (zh_news if news_mode else zh_full):
         tasks.append({
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"搜索·中文·{g.split(' OR ')[0]}",
-            "query": f"\"蒙古国\" ({g})",
+            "query": f"\"蒙古国\" ({g}){when_suffix}",
             "hl": "zh-CN",
             "gl": "cn",
             "ceid": "CN:zh-Hans",
             "engine": "google_news",
             "require_mongolia": True,
+            "tier": "news" if news_mode else "full",
         })
 
     # —— 媒体站内搜索（可打开原文）——
-    site_queries = [
+    site_queries_full = [
         "мансууруулах",
         "хар тамхи",
         "метамфетамин",
@@ -254,6 +286,12 @@ def build_search_queries() -> List[dict]:
         "фентанил",
         "нитазен",
         "баривчилгаа",
+    ]
+    site_queries_news = [
+        "мансууруулах",
+        "хар тамхи",
+        "метамфетамин",
+        "фентанил",
     ]
     site_engines = [
         {
@@ -271,9 +309,14 @@ def build_search_queries() -> List[dict]:
             "template": "https://ikon.mn/search?q={q}",
             "system_id": 8,
         },
+        {
+            "org_name": "News.mn站内搜索",
+            "template": "https://news.mn/search?q={q}",
+            "system_id": 8,
+        },
     ]
     for site in site_engines:
-        for q in site_queries:
+        for q in (site_queries_news if news_mode else site_queries_full):
             tasks.append({
                 "system_id": site["system_id"],
                 "system_name": "全国媒体与公开资讯",
@@ -285,6 +328,7 @@ def build_search_queries() -> List[dict]:
                 "engine": "site_search",
                 "search_url": site["template"].format(q=q),
                 "require_mongolia": False,
+                "tier": "news" if news_mode else "full",
             })
 
     return tasks

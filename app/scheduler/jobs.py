@@ -1,4 +1,4 @@
-"""定时任务系统：每日/12小时/6小时/每小时巡检 + 日简报推送"""
+"""定时任务：高频新闻监测 + 每日全量研判 + 周报"""
 from __future__ import annotations
 
 import logging
@@ -20,6 +20,7 @@ _scheduler: Optional[BackgroundScheduler] = None
 
 
 INTERVAL_MAP = {
+    "every_30m": IntervalTrigger(minutes=30),
     "hourly": IntervalTrigger(hours=1),
     "every_6h": IntervalTrigger(hours=6),
     "every_12h": IntervalTrigger(hours=12),
@@ -27,14 +28,28 @@ INTERVAL_MAP = {
 }
 
 
-def _job_crawl_and_analyze() -> None:
-    logger.info("定时任务触发：全网巡检抓取 + 研判")
+def _job_news_monitor() -> None:
+    """高频：只抓最新涉毒新闻，不生成完整日报告。"""
+    logger.info("定时任务触发：新闻监测")
     db = SessionLocal()
     try:
-        result = run_intel_cycle(db, report_type="daily", send_email=True)
-        logger.info("定时任务完成: %s", result)
+        result = run_intel_cycle(db, report_type="daily", send_email=True, mode="news")
+        logger.info("新闻监测完成: %s", result)
     except Exception:
-        logger.exception("定时任务失败")
+        logger.exception("新闻监测失败")
+    finally:
+        db.close()
+
+
+def _job_full_daily() -> None:
+    """每日：全量搜索 + 研判报告 + 邮件简报。"""
+    logger.info("定时任务触发：全量日研判")
+    db = SessionLocal()
+    try:
+        result = run_intel_cycle(db, report_type="daily", send_email=True, mode="full")
+        logger.info("全量日研判完成: %s", result)
+    except Exception:
+        logger.exception("全量日研判失败")
     finally:
         db.close()
 
@@ -43,7 +58,7 @@ def _job_weekly_report() -> None:
     logger.info("定时任务触发：周度研判报告")
     db = SessionLocal()
     try:
-        result = run_intel_cycle(db, report_type="weekly", send_email=True, skip_crawl=True)
+        result = run_intel_cycle(db, report_type="weekly", send_email=True, skip_crawl=True, mode="full")
         logger.info("周报完成: %s", result)
     except Exception:
         logger.exception("周报任务失败")
@@ -57,24 +72,26 @@ def start_scheduler() -> BackgroundScheduler:
         return _scheduler
 
     sched = BackgroundScheduler(timezone=settings.timezone)
-    trigger = INTERVAL_MAP.get(settings.crawl_interval, INTERVAL_MAP["daily"])
+    trigger = INTERVAL_MAP.get(settings.crawl_interval, INTERVAL_MAP["hourly"])
+    # 高频新闻监测（默认每小时）
     sched.add_job(
-        _job_crawl_and_analyze,
+        _job_news_monitor,
         trigger=trigger,
-        id="crawl_analyze",
+        id="news_monitor",
         replace_existing=True,
         max_instances=1,
         coalesce=True,
-        next_run_time=datetime.now(),  # 启动后尽快跑一轮
+        next_run_time=datetime.now(),  # 启动后尽快跑一轮新闻
     )
+    # 每天固定时刻全量研判 + 日简报
     sched.add_job(
-        _job_crawl_and_analyze,
+        _job_full_daily,
         CronTrigger(
             hour=settings.email_daily_brief_hour,
             minute=settings.email_daily_brief_minute,
             timezone=settings.timezone,
         ),
-        id="daily_brief",
+        id="daily_full",
         replace_existing=True,
         max_instances=1,
     )
@@ -87,7 +104,12 @@ def start_scheduler() -> BackgroundScheduler:
     )
     sched.start()
     _scheduler = sched
-    logger.info("调度器已启动，巡检间隔=%s", settings.crawl_interval)
+    logger.info(
+        "调度器已启动：新闻监测=%s，每日全量=%02d:%02d",
+        settings.crawl_interval,
+        settings.email_daily_brief_hour,
+        settings.email_daily_brief_minute,
+    )
     return sched
 
 
@@ -107,6 +129,14 @@ def reschedule_crawl(interval_key: str) -> None:
     sched = get_scheduler()
     if not sched:
         return
-    trigger = INTERVAL_MAP.get(interval_key, INTERVAL_MAP["daily"])
-    sched.reschedule_job("crawl_analyze", trigger=trigger)
-    logger.info("已重设巡检间隔: %s", interval_key)
+    trigger = INTERVAL_MAP.get(interval_key, INTERVAL_MAP["hourly"])
+    try:
+        sched.reschedule_job("news_monitor", trigger=trigger)
+    except Exception:
+        # 兼容旧 job id
+        try:
+            sched.reschedule_job("crawl_analyze", trigger=trigger)
+        except Exception:
+            logger.exception("重设巡检间隔失败")
+            return
+    logger.info("已重设新闻监测间隔: %s", interval_key)

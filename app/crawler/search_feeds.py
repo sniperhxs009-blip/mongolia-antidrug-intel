@@ -25,6 +25,7 @@ from app.crawler.filters import (
     translate_to_zh,
 )
 from app.db.models import IntelItem
+from config.drug_lexicon import build_search_queries
 from config.sources import SEARCH_FEEDS
 
 logger = logging.getLogger(__name__)
@@ -77,7 +78,7 @@ class SearchFeedCollector:
         except Exception:  # noqa: BLE001
             logger.debug("search progress callback failed", exc_info=True)
 
-    def run(self) -> dict:
+    def run(self, mode: str = "full") -> dict:
         headers = {
             "User-Agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -86,13 +87,21 @@ class SearchFeedCollector:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
-        feeds = SEARCH_FEEDS
+        if mode == "news":
+            when = getattr(settings, "news_when", "7d") or "7d"
+            feeds = build_search_queries(mode="news", when=when)
+            phase = "最新新闻监测"
+            msg = f"启动新闻监测（近{when}），共 {len(feeds)} 路任务"
+        else:
+            feeds = SEARCH_FEEDS or build_search_queries(mode="full")
+            phase = "关键词全量搜索"
+            msg = f"启动全量毒品关键词搜索，共 {len(feeds)} 路任务"
         total = len(feeds)
         self._emit(
             "phase",
             status="running",
-            phase="关键词全量搜索",
-            message=f"启动全量毒品关键词搜索，共 {total} 路任务",
+            phase=phase,
+            message=msg,
             total_sources=total,
             current_index=0,
         )
@@ -162,7 +171,9 @@ class SearchFeedCollector:
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")
         parsed = feedparser.parse(resp.text)
-        for entry in (parsed.entries or [])[:35]:
+        # 新闻监测取更少条目，加快轮询；全量略多
+        cap = 18 if (feed.get("tier") == "news") else 30
+        for entry in (parsed.entries or [])[:cap]:
             title = normalize_text(getattr(entry, "title", "") or "")
             link = getattr(entry, "link", "") or ""
             raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""

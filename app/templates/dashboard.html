@@ -13,7 +13,7 @@
       <div class="mark">禁</div>
       <div>
         <h1>蒙古国禁毒全网情报指挥台</h1>
-        <p class="sub">官方七大体系 · 全国媒体 · 搜索聚合 · 自动研判 · 邮箱推送</p>
+        <p class="sub">长期新闻监测 · 自动增量入库 · 定时研判 · 邮箱告警</p>
       </div>
     </div>
     <div class="top-meta">
@@ -46,19 +46,22 @@
 
         <form class="ops-row" method="post" action="/api/schedule">
           <select name="interval">
-            <option value="hourly" {% if crawl_interval=='hourly' %}selected{% endif %}>每小时</option>
+            <option value="every_30m" {% if crawl_interval=='every_30m' %}selected{% endif %}>每30分钟（新闻监测）</option>
+            <option value="hourly" {% if crawl_interval=='hourly' %}selected{% endif %}>每小时（推荐）</option>
             <option value="every_6h" {% if crawl_interval=='every_6h' %}selected{% endif %}>每6小时</option>
             <option value="every_12h" {% if crawl_interval=='every_12h' %}selected{% endif %}>每12小时</option>
             <option value="daily" {% if crawl_interval=='daily' %}selected{% endif %}>每日</option>
           </select>
-          <button type="submit" class="secondary">更新定时</button>
+          <button type="submit" class="secondary">更新监测频率</button>
         </form>
 
         <div class="ops-row" style="margin-top:12px">
-          <button id="btnDaily" onclick="startMission('daily')">立即全网巡检 + 日报告</button>
-          <button class="secondary" id="btnWeekly" onclick="startMission('weekly')">生成周报</button>
-          <button class="secondary" id="btnMonthly" onclick="startMission('monthly')">生成月报</button>
+          <button id="btnNews" onclick="startMission('daily','news')">立即抓取最新新闻</button>
+          <button class="secondary" id="btnDaily" onclick="startMission('daily','full')">全量巡检 + 日报告</button>
+          <button class="secondary" id="btnWeekly" onclick="startMission('weekly','full')">生成周报</button>
+          <button class="secondary" id="btnMonthly" onclick="startMission('monthly','full')">生成月报</button>
         </div>
+        <p class="hint" style="margin-top:8px">系统默认按设定频率自动抓取近7天涉毒新闻；每日固定时刻再跑全量研判。本页每30秒自动刷新最新情报。</p>
 
         <div class="progress-block" id="progressBlock">
           <div class="progress-meta">
@@ -101,8 +104,8 @@
     <section class="hud-grid">
       <div class="panel">
         <div class="panel-title">
-          <h2>实时情报入库</h2>
-          <span class="tag">每出一条显示一条</span>
+          <h2>最新涉毒新闻</h2>
+          <span class="tag" id="autoRefreshTag">自动刷新 · 30秒</span>
         </div>
         <div class="live-intel" id="liveIntel">
           {% for it in latest_items %}
@@ -152,15 +155,17 @@
   function $(id) { return document.getElementById(id); }
 
   function setBusy(busy) {
-    ['btnDaily','btnWeekly','btnMonthly'].forEach(id => { $(id).disabled = busy; });
+    ['btnNews','btnDaily','btnWeekly','btnMonthly'].forEach(id => {
+      const el = $(id); if (el) el.disabled = busy;
+    });
     const dot = $('statusDot');
     const txt = $('statusText');
     if (busy) {
       dot.className = 'live-dot busy';
-      txt.textContent = '巡检进行中';
+      txt.textContent = '监测进行中';
     } else {
       dot.className = 'live-dot';
-      txt.textContent = '系统待命';
+      txt.textContent = '长期监测中';
     }
   }
 
@@ -273,13 +278,15 @@
     };
   }
 
-  async function startMission(type) {
+  async function startMission(type, mode) {
+    mode = mode || 'full';
     setBusy(true);
     $('eventFeed').innerHTML = '';
-    pushEvent({ ts: new Date().toISOString(), type: 'queued', message: '正在启动全网巡检…' });
+    const label = mode === 'news' ? '正在启动最新新闻监测…' : '正在启动全网巡检…';
+    pushEvent({ ts: new Date().toISOString(), type: 'queued', message: label });
     updateProgress({ phase: '排队中', percent: 1, message: '任务提交中…', items_new: 0, items_updated: 0, pages_fetched: 0 });
     try {
-      const res = await fetch('/api/crawl/run?report_type=' + encodeURIComponent(type), { method: 'POST' });
+      const res = await fetch('/api/crawl/run?report_type=' + encodeURIComponent(type) + '&mode=' + encodeURIComponent(mode), { method: 'POST' });
       const data = await res.json();
       if (res.status === 409 && data.run_id) {
         pushEvent({ ts: new Date().toISOString(), type: 'warn', message: '已有任务运行中，接入现有进度…' });
@@ -297,11 +304,48 @@
     }
   }
 
+  let maxSeenId = Math.max(0, ...[...seenIntel]);
+
+  async function pollLatestIntel() {
+    try {
+      const url = maxSeenId > 0
+        ? `/api/intel?since_id=${maxSeenId}&limit=50`
+        : '/api/intel?limit=20';
+      const rows = await fetch(url).then(r => r.json());
+      if (!Array.isArray(rows) || !rows.length) return;
+      // since_id 返回升序；无 since_id 返回降序，统一按 id 升序追加
+      const ordered = [...rows].sort((a, b) => a.id - b.id);
+      for (const it of ordered) {
+        if (!it.id || seenIntel.has(it.id)) continue;
+        prependIntel({
+          id: it.id,
+          title: it.title,
+          org: it.org,
+          system: it.system,
+          level: it.level,
+          category: it.category,
+          url: it.url,
+          status: 'new',
+          is_alert: it.is_alert,
+        });
+        maxSeenId = Math.max(maxSeenId, it.id);
+      }
+      // 刷新统计
+      const st = await fetch('/api/stats').then(r => r.json());
+      if (st.intel_items != null) $('statIntel').textContent = st.intel_items;
+      if (st.alerts != null) $('statAlerts').textContent = st.alerts;
+      if (st.reports != null) $('statReports').textContent = st.reports;
+    } catch (e) {}
+  }
+
   function tickClock() {
     $('clock').textContent = 'UTC ' + new Date().toISOString().slice(11, 19);
   }
   tickClock();
   setInterval(tickClock, 1000);
+  setInterval(pollLatestIntel, 30000);
+  // 页面打开先拉一次增量
+  setTimeout(pollLatestIntel, 3000);
 
   (async () => {
     try {
@@ -311,6 +355,8 @@
         openStream(s.run_id);
         updateProgress(s);
         (s.events || []).slice(-40).forEach(pushEvent);
+      } else {
+        $('statusText').textContent = '长期监测中';
       }
     } catch (e) {}
   })();
