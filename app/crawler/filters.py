@@ -136,6 +136,22 @@ NEGATIVE_PATTERNS = [
     r"肝炎",
     r"药品免税",
     r"хүн\s*худалдах",
+    # 非毒品「查获/走私」噪声：化石、恐龙、土拨鼠鼠疫、雪豹皮、游艇
+    r"\bfossil\b",
+    r"\bdinosaur\b",
+    r"\btyrannosaur",
+    r"恐龙",
+    r"化石",
+    r"\bmarmot\b",
+    r"土拨鼠",
+    r"\bplague\b",
+    r"鼠疫",
+    r"\bsnow\s*leopard\b",
+    r"雪豹",
+    r"\bluxury\s+good",
+    r"奢侈品",
+    r"\byacht\b",
+    r"游艇",
     # 俄罗斯布里亚特/乌兰乌德本地案（非蒙古国）
     r"улан[- ]?удэ",
     r"ulan[- ]?ude",
@@ -188,6 +204,9 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
         "incb.org", "who.int", "wcoomd.org", "interpol.int", "state.gov",
         "dea.gov", "euda.europa.eu", "emcdda.europa.eu", "ocindex.net",
         "eurasianet.org", "france24.com", "japantimes.co.jp", "yna.co.kr",
+        "reddit.com", "quora.com", "zhihu.com", "tieba.baidu.com",
+        "bluelight.org", "drugs-forum.com", "medium.com", "substack.com",
+        "news.ycombinator.com", "duckduckgo.com", "bing.com",
     )
     for suf in intl_suffixes:
         if host == suf or host.endswith("." + suf):

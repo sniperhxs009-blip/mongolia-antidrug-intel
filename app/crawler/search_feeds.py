@@ -85,7 +85,7 @@ class SearchFeedCollector:
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
             ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
         if mode == "news":
@@ -94,9 +94,14 @@ class SearchFeedCollector:
             phase = "最新新闻监测"
             msg = f"启动新闻监测（近{when}），共 {len(feeds)} 路任务"
         else:
-            feeds = SEARCH_FEEDS or build_search_queries(mode="full")
+            when = getattr(settings, "full_when", "30d") or "30d"
+            feeds = build_search_queries(mode="full", when=when)
             phase = "关键词全量搜索"
-            msg = f"启动全量毒品关键词搜索，共 {len(feeds)} 路任务"
+            msg = f"启动全量搜索（近{when}，含论坛/多引擎），共 {len(feeds)} 路任务"
+        # 论坛开关
+        if not getattr(settings, "enable_forum_search", True):
+            feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
+
         total = len(feeds)
         self._emit(
             "phase",
@@ -122,7 +127,7 @@ class SearchFeedCollector:
                     total_sources=total,
                     current_org=org,
                     current_url=feed.get("search_url") or feed.get("query", ""),
-                    phase="关键词全量搜索",
+                    phase=phase,
                     message=f"[{idx}/{total}] {org}",
                     items_new=self.stats["items_new"],
                     items_updated=self.stats["items_updated"],
@@ -132,6 +137,14 @@ class SearchFeedCollector:
                 try:
                     if engine == "site_search":
                         self._ingest_site_search(client, feed)
+                    elif engine == "reddit_search":
+                        self._ingest_reddit(client, feed)
+                    elif engine == "bing_news":
+                        self._ingest_rss_url(client, feed, feed.get("search_url") or "")
+                    elif engine == "ddg_news":
+                        self._ingest_ddg_news(client, feed)
+                    elif engine == "web_search":
+                        self._ingest_web_search(client, feed)
                     else:
                         url = _google_news_url(feed["query"], feed["hl"], feed["gl"], feed["ceid"])
                         self._ingest_google_feed(client, feed, url)
@@ -167,18 +180,26 @@ class SearchFeedCollector:
         )
         return self.stats
 
+    def _too_old(self, published: Optional[datetime]) -> bool:
+        """严格近期：有发布时间且超过 crawl_max_age_days 则丢弃。"""
+        if not published:
+            return False  # 无日期时靠 when: 查询约束；不因缺日期全丢
+        max_days = int(getattr(settings, "crawl_max_age_days", 30) or 30)
+        from datetime import timedelta
+
+        return published < datetime.utcnow() - timedelta(days=max_days)
+
     def _ingest_google_feed(self, client: httpx.Client, feed: dict, url: str) -> None:
         resp = client.get(url)
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")
         parsed = feedparser.parse(resp.text)
         # 新闻监测取更少条目，加快轮询；全量略多
-        cap = 18 if (feed.get("tier") == "news") else 30
+        cap = 18 if (feed.get("tier") in ("news", "forum")) else 30
         for entry in (parsed.entries or [])[:cap]:
             title = normalize_text(getattr(entry, "title", "") or "")
             link = getattr(entry, "link", "") or ""
             raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
-            # 去掉 RSS HTML
             summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
             if not title:
                 continue
@@ -189,6 +210,9 @@ class SearchFeedCollector:
                     published = datetime(*entry.published_parsed[:6])
                 except Exception:
                     published = None
+            if self._too_old(published):
+                self.stats["items_filtered"] += 1
+                continue
             self._save_item(
                 feed=feed,
                 title=title,
@@ -198,6 +222,170 @@ class SearchFeedCollector:
                 require_mongolia=bool(feed.get("require_mongolia", True)),
                 force_drug=False,
             )
+
+    def _ingest_rss_url(self, client: httpx.Client, feed: dict, url: str) -> None:
+        if not url:
+            return
+        resp = client.get(url)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+        parsed = feedparser.parse(resp.text)
+        for entry in (parsed.entries or [])[:25]:
+            title = normalize_text(getattr(entry, "title", "") or "")
+            link = getattr(entry, "link", "") or ""
+            raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
+            summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
+            if not title:
+                continue
+            published = None
+            if getattr(entry, "published_parsed", None):
+                try:
+                    published = datetime(*entry.published_parsed[:6])
+                except Exception:
+                    published = None
+            if self._too_old(published):
+                self.stats["items_filtered"] += 1
+                continue
+            self._save_item(
+                feed=feed,
+                title=title,
+                summary=summary,
+                url=link,
+                published=published,
+                require_mongolia=bool(feed.get("require_mongolia", True)),
+            )
+
+    def _ingest_reddit(self, client: httpx.Client, feed: dict) -> None:
+        url = feed.get("search_url")
+        if not url:
+            from urllib.parse import quote
+
+            url = (
+                "https://www.reddit.com/search.json?"
+                f"q={quote(feed.get('query') or '')}&sort=new&t=month&limit=25"
+            )
+        headers = {"User-Agent": "MN-AntiDrug-IntelBot/1.0 (osint research)"}
+        resp = client.get(url, headers=headers)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+        data = resp.json()
+        children = ((data.get("data") or {}).get("children")) or []
+        for child in children[:25]:
+            d = child.get("data") or {}
+            title = normalize_text(d.get("title") or "")
+            permalink = d.get("permalink") or ""
+            link = ("https://www.reddit.com" + permalink) if permalink.startswith("/") else (d.get("url") or "")
+            summary = normalize_text((d.get("selftext") or "")[:500])
+            if not title:
+                continue
+            published = None
+            created = d.get("created_utc")
+            if created:
+                try:
+                    published = datetime.utcfromtimestamp(float(created))
+                except Exception:
+                    published = None
+            if self._too_old(published):
+                self.stats["items_filtered"] += 1
+                continue
+            self._save_item(
+                feed=feed,
+                title=title,
+                summary=summary or title,
+                url=link,
+                published=published,
+                require_mongolia=True,
+            )
+
+    def _ingest_ddg_news(self, client: httpx.Client, feed: dict) -> None:
+        # DuckDuckGo news JSON 常不稳定，失败则走 HTML 搜索
+        url = feed.get("search_url") or ""
+        try:
+            if url:
+                resp = client.get(url)
+                if resp.status_code < 400:
+                    data = resp.json()
+                    results = data if isinstance(data, list) else (data.get("results") or data.get("items") or [])
+                    for it in results[:20]:
+                        title = normalize_text(it.get("title") or it.get("heading") or "")
+                        link = it.get("url") or it.get("link") or ""
+                        summary = normalize_text(it.get("excerpt") or it.get("body") or "")
+                        if title and link:
+                            self._save_item(
+                                feed=feed,
+                                title=title,
+                                summary=summary,
+                                url=link,
+                                published=None,
+                                require_mongolia=True,
+                            )
+                    return
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("ddg json failed: %s", exc)
+        # 兜底 HTML
+        q = feed.get("query") or ""
+        self._ingest_web_search(
+            client,
+            {**feed, "search_url": f"https://html.duckduckgo.com/html/?q={quote_plus(q)}"},
+        )
+
+    def _ingest_web_search(self, client: httpx.Client, feed: dict) -> None:
+        """解析 Google/DuckDuckGo HTML 搜索结果中的链接（偏 Reddit/论坛）。"""
+        url = feed.get("search_url")
+        if not url:
+            q = feed.get("query") or ""
+            url = f"https://www.google.com/search?q={quote_plus(q)}&num=20&hl=en&tbs=qdr:m"
+        resp = client.get(url)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"HTTP {resp.status_code}")
+        soup = BeautifulSoup(resp.text, "lxml")
+        seen = set()
+        count = 0
+        for a in soup.find_all("a", href=True):
+            href = a["href"].strip()
+            text = normalize_text(a.get_text(" ", strip=True))
+            cand = href
+            if href.startswith("/url?"):
+                qs = parse_qs(urlparse(href).query)
+                cand = unquote((qs.get("q") or qs.get("url") or [""])[0])
+            if "uddg=" in href:
+                qs = parse_qs(urlparse("http://x/?" + href.split("?", 1)[-1]).query)
+                cand = unquote((qs.get("uddg") or [""])[0])
+            if not cand.startswith("http"):
+                continue
+            host = urlparse(cand).netloc.lower()
+            # 优先论坛/社区；也允许新闻域
+            forum_ok = any(
+                x in host
+                for x in (
+                    "reddit.com", "quora.com", "zhihu.com", "tieba.baidu.com",
+                    "bluelight.org", "drugs-forum.com", "medium.com", "substack.com",
+                    "news.ycombinator.com",
+                )
+            )
+            news_ok = any(
+                x in host
+                for x in (
+                    "reuters.com", "bbc.", "theguardian.", "apnews.", "vice.com",
+                    "thediplomat.com", "news.mn", "gogo.mn", "montsame.mn",
+                )
+            )
+            if not (forum_ok or news_ok):
+                continue
+            if cand in seen or len(text) < 8:
+                continue
+            seen.add(cand)
+            self._save_item(
+                feed=feed,
+                title=text[:300],
+                summary=f"{text}（来源：{host}）",
+                url=cand,
+                published=None,
+                require_mongolia=True,
+            )
+            count += 1
+            if count >= 15:
+                break
 
     def _ingest_site_search(self, client: httpx.Client, feed: dict) -> None:
         search_url = feed.get("search_url")
@@ -324,6 +512,11 @@ class SearchFeedCollector:
 
         # 涉毒：标题/摘要必须命中强词库（严格模式）
         if not is_drug_related(body, loose=False):
+            self.stats["items_filtered"] += 1
+            return
+
+        # 严格近期：有发布时间则必须在窗口内
+        if self._too_old(published):
             self.stats["items_filtered"] += 1
             return
 

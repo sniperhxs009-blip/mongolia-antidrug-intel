@@ -71,13 +71,17 @@ def test_lexicon_large():
 
 
 def test_search_queries_built():
-    qs = build_search_queries(mode="full")
-    assert len(qs) >= 30
+    qs = build_search_queries(mode="full", when="30d")
+    assert len(qs) >= 40
     assert any(q.get("engine") == "site_search" for q in qs)
     assert any(q.get("engine") == "google_news" for q in qs)
+    assert any(q.get("engine") == "reddit_search" for q in qs)
+    assert any(q.get("engine") == "bing_news" for q in qs)
+    assert any("when:30d" in (q.get("query") or "") for q in qs)
     news = build_search_queries(mode="news", when="7d")
-    assert 10 <= len(news) < len(qs)
+    assert 15 <= len(news) <= len(qs)
     assert any("when:7d" in (q.get("query") or "") for q in news)
+    assert any(q.get("system_id") == 11 for q in qs)
 
 
 def test_official_stats_config():

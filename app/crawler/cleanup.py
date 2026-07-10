@@ -25,6 +25,14 @@ def is_from_mn_media(item: IntelItem) -> bool:
 
 
 def purge_irrelevant_items(db: Session) -> Dict[str, int]:
+    from datetime import datetime, timedelta
+
+    from app.config import get_settings
+
+    settings = get_settings()
+    max_days = int(getattr(settings, "crawl_max_age_days", 30) or 30)
+    cutoff = datetime.utcnow() - timedelta(days=max_days)
+
     rows = db.query(IntelItem).all()
     deleted = 0
     kept = 0
@@ -39,9 +47,14 @@ def purge_irrelevant_items(db: Session) -> Dict[str, int]:
                 it.content_zh or "",
             ]
         )
+        # 过期旧闻（有发布时间）一律清理
+        pub = it.published_at
+        if pub and pub < cutoff:
+            db.delete(it)
+            deleted += 1
+            continue
         drug_ok = is_drug_related(blob, loose=False)
         mn_ok = is_mongolia_country_related(blob) or is_from_mn_media(it)
-        # 蒙古媒体站内稿也必须真正涉毒
         if is_from_mn_media(it) and not drug_ok:
             db.delete(it)
             deleted += 1
@@ -52,11 +65,9 @@ def purge_irrelevant_items(db: Session) -> Dict[str, int]:
             continue
         kept += 1
 
-    # 同步清理无蒙古语境的统计点
     for st in db.query(StatRecord).all():
         blob = " ".join([st.title or "", st.raw_snippet or "", st.org_name or ""])
         if not is_mongolia_country_related(blob) and "蒙古" not in (st.org_name or ""):
-            # UNODC 全球稿无蒙古 → 删
             if "mongolia" not in blob.lower() and "монгол" not in blob.lower() and "蒙古" not in blob:
                 db.delete(st)
                 deleted += 1

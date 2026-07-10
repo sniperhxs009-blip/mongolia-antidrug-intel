@@ -297,8 +297,8 @@ SOURCES = [
     },
 ]
 
-# 由词库动态生成搜索任务（全量）；新闻快扫在运行时按 mode 重建
-SEARCH_FEEDS = build_search_queries(mode="full")
+# 由词库动态生成搜索任务（全量也强制近期 when）
+SEARCH_FEEDS = build_search_queries(mode="full", when="30d")
 
 DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS
@@ -343,9 +343,13 @@ ALLOWED_DOMAINS = [
 
 # 合并全球媒体与国际机构域名
 from config.global_media import GLOBAL_ALLOWED_DOMAINS  # noqa: E402
+from config.forum_search import FORUM_ALLOWED_DOMAINS  # noqa: E402
 
-ALLOWED_DOMAINS = list(dict.fromkeys(ALLOWED_DOMAINS + GLOBAL_ALLOWED_DOMAINS))
+ALLOWED_DOMAINS = list(
+    dict.fromkeys(ALLOWED_DOMAINS + GLOBAL_ALLOWED_DOMAINS + FORUM_ALLOWED_DOMAINS)
+)
 
 ALLOW_ANY_MN_DOMAIN = True
 # 搜索聚合入库时允许全球主流媒体域名（已在白名单）
 ALLOW_GLOBAL_MEDIA = True
+ALLOW_FORUM_DOMAINS = True

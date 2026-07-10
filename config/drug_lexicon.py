@@ -336,6 +336,12 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
 
     tasks.extend(build_global_search_queries(mode=mode, when=when))
 
+    # —— Reddit / 论坛 / DuckDuckGo / Bing 补充搜索 ——
+    if when:  # 论坛类必须带时效
+        from config.forum_search import build_forum_search_queries
+
+        tasks.extend(build_forum_search_queries(mode=mode, when=when))
+
     return tasks
 
 
