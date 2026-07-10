@@ -72,7 +72,14 @@ class CrawlEngine:
         """
         created = 0
         seen: Set[Tuple[str, str]] = set()
-        all_sources = list(SOURCES) + list(OFFICIAL_STAT_SOURCES) + list(GLOBAL_COVERAGE_SOURCES)
+        from config.core_official import CORE_OFFICIAL_SOURCES
+
+        all_sources = (
+            list(CORE_OFFICIAL_SOURCES)
+            + list(SOURCES)
+            + list(OFFICIAL_STAT_SOURCES)
+            + list(GLOBAL_COVERAGE_SOURCES)
+        )
         for s in all_sources:
             for path in s.get("seed_paths") or ["/"]:
                 page_url = urljoin(s["base_url"].rstrip("/") + "/", path.lstrip("/"))
@@ -107,6 +114,175 @@ class CrawlEngine:
         logger.info("种子数据源写入完成: +%s", created)
         return created
 
+    def run_core_official_crawl(self, resume: bool = False) -> CrawlJob:
+        """仅巡检文档指定的核心官方种子（适合新闻监测轮增量）。"""
+        from config.core_official import CORE_OFFICIAL_SOURCES
+
+        core_orgs = {s["org_name"] for s in CORE_OFFICIAL_SOURCES}
+        core_hosts = {
+            (s["base_url"].replace("https://", "").replace("http://", "").split("/")[0]).lower()
+            for s in CORE_OFFICIAL_SOURCES
+        }
+        job = CrawlJob(status="running", started_at=datetime.utcnow(), checkpoint="{}")
+        self.db.add(job)
+        self.db.commit()
+        self.db.refresh(job)
+        try:
+            self.seed_sources()
+            sources = (
+                self.db.query(Source)
+                .filter(Source.is_active.is_(True))
+                .order_by(Source.system_id, Source.id)
+                .all()
+            )
+            sources = [
+                s for s in sources
+                if s.org_name in core_orgs
+                or any(h in (s.base_url or "").lower() or h in (s.page_url or "").lower() for h in core_hosts)
+            ]
+            # 去重同 URL，优先种子
+            seen_url = set()
+            uniq = []
+            for s in sources:
+                u = (s.page_url or "").rstrip("/")
+                if u in seen_url:
+                    continue
+                seen_url.add(u)
+                uniq.append(s)
+            sources = uniq[:80]
+            total = len(sources)
+            self._emit(
+                "phase",
+                status="running",
+                phase="核心官网增量",
+                message=f"正在增量巡检 {total} 个核心官方页面…",
+                total_sources=total,
+                current_index=0,
+            )
+            old_max = settings.crawl_max_pages_per_source
+            settings.crawl_max_pages_per_source = min(
+                old_max, int(getattr(settings, "crawl_max_pages_core", 12) or 12)
+            )
+            try:
+                self._crawl_source_list(job, sources, resume=resume, phase="核心官网增量")
+            finally:
+                settings.crawl_max_pages_per_source = old_max
+            job.status = "success"
+            job.finished_at = datetime.utcnow()
+            job.pages_fetched = self.stats["pages_fetched"]
+            job.items_new = self.stats["items_new"]
+            job.items_updated = self.stats["items_updated"]
+            job.items_filtered = self.stats["items_filtered"]
+            job.error_count = self.stats["error_count"]
+            job.message = (
+                f"核心官网完成：新{self.stats['items_new']} "
+                f"更新{self.stats['items_updated']} 过滤{self.stats['items_filtered']}"
+            )
+            self.db.commit()
+            self._emit("phase", status="success", phase="核心官网完成", message=job.message)
+            return job
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("core official crawl failed")
+            job.status = "failed"
+            job.message = str(exc)
+            job.finished_at = datetime.utcnow()
+            self.db.commit()
+            self._emit("error", status="failed", phase="核心官网失败", message=str(exc))
+            return job
+
+    def _crawl_source_list(
+        self,
+        job: CrawlJob,
+        sources: list,
+        resume: bool = True,
+        phase: str = "全网巡检",
+    ) -> None:
+        total = len(sources)
+        done_urls: Set[str] = set()
+        if resume and job.checkpoint:
+            try:
+                done_urls = set(json.loads(job.checkpoint or "{}").get("done", []))
+            except Exception:
+                done_urls = set()
+
+        fetched_pages: Set[str] = set()
+        with httpx.Client(
+            headers=self.headers,
+            timeout=settings.crawl_timeout_sec,
+            follow_redirects=True,
+            verify=settings.crawl_ssl_verify,
+        ) as client:
+            for idx, src in enumerate(sources, start=1):
+                checkpoint_key = f"{src.org_name}|{src.page_url}"
+                if checkpoint_key in done_urls:
+                    self._emit(
+                        "source_skip",
+                        current_index=idx,
+                        total_sources=total,
+                        current_org=src.org_name,
+                        current_url=src.page_url,
+                        message=f"断点跳过：{src.org_name}",
+                        pages_fetched=self.stats["pages_fetched"],
+                        items_new=self.stats["items_new"],
+                        items_updated=self.stats["items_updated"],
+                        items_filtered=self.stats["items_filtered"],
+                        error_count=self.stats["error_count"],
+                    )
+                    continue
+
+                self._emit(
+                    "source_start",
+                    current_index=idx,
+                    total_sources=total,
+                    current_org=src.org_name,
+                    current_url=src.page_url,
+                    phase=phase,
+                    message=f"[{idx}/{total}] 正在扫描：{src.org_name}",
+                    system_name=src.system_name,
+                    pages_fetched=self.stats["pages_fetched"],
+                    items_new=self.stats["items_new"],
+                    items_updated=self.stats["items_updated"],
+                    items_filtered=self.stats["items_filtered"],
+                    error_count=self.stats["error_count"],
+                )
+                try:
+                    self._crawl_source(client, src, fetched_pages=fetched_pages)
+                except Exception as exc:  # noqa: BLE001
+                    self.stats["error_count"] += 1
+                    src.last_status = f"error:{exc}"[:60]
+                    logger.exception("爬取失败 %s: %s", src.page_url, exc)
+                    self._emit(
+                        "source_error",
+                        current_org=src.org_name,
+                        current_url=src.page_url,
+                        message=f"扫描失败：{src.org_name} — {exc}",
+                        error_count=self.stats["error_count"],
+                    )
+
+                done_urls.add(checkpoint_key)
+                job.checkpoint = json.dumps({"done": list(done_urls)[-500:]}, ensure_ascii=False)
+                job.pages_fetched = self.stats["pages_fetched"]
+                job.items_new = self.stats["items_new"]
+                job.items_updated = self.stats["items_updated"]
+                job.items_filtered = self.stats["items_filtered"]
+                job.error_count = self.stats["error_count"]
+                self.db.commit()
+
+                self._emit(
+                    "source_done",
+                    current_index=idx,
+                    total_sources=total,
+                    current_org=src.org_name,
+                    current_url=src.page_url,
+                    message=f"完成：{src.org_name}｜状态 {src.last_status}",
+                    pages_fetched=self.stats["pages_fetched"],
+                    items_new=self.stats["items_new"],
+                    items_updated=self.stats["items_updated"],
+                    items_filtered=self.stats["items_filtered"],
+                    error_count=self.stats["error_count"],
+                )
+                time.sleep(settings.crawl_request_delay_sec)
+
     def run_full_crawl(self, resume: bool = True) -> CrawlJob:
         job = CrawlJob(status="running", started_at=datetime.utcnow(), checkpoint="{}")
         self.db.add(job)
@@ -138,91 +314,7 @@ class CrawlEngine:
                 total_sources=total,
                 current_index=0,
             )
-
-            done_urls: Set[str] = set()
-            if resume and job.checkpoint:
-                try:
-                    done_urls = set(json.loads(job.checkpoint or "{}").get("done", []))
-                except Exception:
-                    done_urls = set()
-
-            fetched_pages: Set[str] = set()
-            with httpx.Client(
-                headers=self.headers,
-                timeout=settings.crawl_timeout_sec,
-                follow_redirects=True,
-                verify=settings.crawl_ssl_verify,
-            ) as client:
-                for idx, src in enumerate(sources, start=1):
-                    checkpoint_key = f"{src.org_name}|{src.page_url}"
-                    if checkpoint_key in done_urls:
-                        self._emit(
-                            "source_skip",
-                            current_index=idx,
-                            total_sources=total,
-                            current_org=src.org_name,
-                            current_url=src.page_url,
-                            message=f"断点跳过：{src.org_name}",
-                            pages_fetched=self.stats["pages_fetched"],
-                            items_new=self.stats["items_new"],
-                            items_updated=self.stats["items_updated"],
-                            items_filtered=self.stats["items_filtered"],
-                            error_count=self.stats["error_count"],
-                        )
-                        continue
-
-                    self._emit(
-                        "source_start",
-                        current_index=idx,
-                        total_sources=total,
-                        current_org=src.org_name,
-                        current_url=src.page_url,
-                        phase="全网巡检",
-                        message=f"[{idx}/{total}] 正在扫描：{src.org_name}",
-                        system_name=src.system_name,
-                        pages_fetched=self.stats["pages_fetched"],
-                        items_new=self.stats["items_new"],
-                        items_updated=self.stats["items_updated"],
-                        items_filtered=self.stats["items_filtered"],
-                        error_count=self.stats["error_count"],
-                    )
-                    try:
-                        self._crawl_source(client, src, fetched_pages=fetched_pages)
-                    except Exception as exc:  # noqa: BLE001
-                        self.stats["error_count"] += 1
-                        src.last_status = f"error:{exc}"[:60]
-                        logger.exception("爬取失败 %s: %s", src.page_url, exc)
-                        self._emit(
-                            "source_error",
-                            current_org=src.org_name,
-                            current_url=src.page_url,
-                            message=f"扫描失败：{src.org_name} — {exc}",
-                            error_count=self.stats["error_count"],
-                        )
-
-                    done_urls.add(checkpoint_key)
-                    job.checkpoint = json.dumps({"done": list(done_urls)[-500:]}, ensure_ascii=False)
-                    job.pages_fetched = self.stats["pages_fetched"]
-                    job.items_new = self.stats["items_new"]
-                    job.items_updated = self.stats["items_updated"]
-                    job.items_filtered = self.stats["items_filtered"]
-                    job.error_count = self.stats["error_count"]
-                    self.db.commit()
-
-                    self._emit(
-                        "source_done",
-                        current_index=idx,
-                        total_sources=total,
-                        current_org=src.org_name,
-                        current_url=src.page_url,
-                        message=f"完成：{src.org_name}｜状态 {src.last_status}",
-                        pages_fetched=self.stats["pages_fetched"],
-                        items_new=self.stats["items_new"],
-                        items_updated=self.stats["items_updated"],
-                        items_filtered=self.stats["items_filtered"],
-                        error_count=self.stats["error_count"],
-                    )
-                    time.sleep(settings.crawl_request_delay_sec)
+            self._crawl_source_list(job, sources, resume=resume, phase="全网巡检")
 
             job.status = "success"
             job.message = "crawl completed"
@@ -276,7 +368,11 @@ class CrawlEngine:
 
         soup = BeautifulSoup(html, "lxml")
         extra = []
-        for s in list(SOURCES) + list(OFFICIAL_STAT_SOURCES) + list(GLOBAL_COVERAGE_SOURCES):
+        try:
+            from config.core_official import CORE_OFFICIAL_SOURCES
+        except Exception:
+            CORE_OFFICIAL_SOURCES = []
+        for s in list(CORE_OFFICIAL_SOURCES) + list(SOURCES) + list(OFFICIAL_STAT_SOURCES) + list(GLOBAL_COVERAGE_SOURCES):
             if s["org_name"] == src.org_name:
                 extra = s.get("keywords_extra") or []
                 break

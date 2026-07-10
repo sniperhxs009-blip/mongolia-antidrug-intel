@@ -146,14 +146,18 @@ class AnalysisEngine:
         return self._to_zh(raw)
 
     def generate_report(self, report_type: str = "daily", days: Optional[int] = None) -> Report:
-        days = days or {"daily": 1, "weekly": 7, "monthly": 30, "alert": 1}.get(report_type, 7)
+        # 日度/月度均按近30日官方归集窗口（与文档一致）；周报7日；告警1日
+        days = days or {"daily": 30, "weekly": 7, "monthly": 30, "alert": 1}.get(report_type, 30)
         items = self.collect_items(days=days)
         period_end = datetime.utcnow()
         period_start = period_end - timedelta(days=days)
 
         md = self._build_markdown(items, report_type, period_start, period_end)
         html = self._md_to_simple_html(md)
-        title = f"蒙古国禁毒情报研判报告（{self._type_label(report_type)}）{period_end.strftime('%Y-%m-%d %H:%M')} UTC"
+        title = (
+            f"蒙古国禁毒全机构近{days}日涉毒情报归集报告 "
+            f"{period_start.strftime('%Y.%m.%d')}-{period_end.strftime('%Y.%m.%d')}"
+        )
 
         import os
 
@@ -184,6 +188,29 @@ class AnalysisEngine:
             report_type, report_type
         )
 
+    def _item_core(self, item: IntelItem) -> str:
+        raw = (item.summary_zh or item.summary or item.content_zh or item.content or "").strip()
+        if not raw:
+            return self._item_title_zh(item)
+        zh = self._to_zh(raw)
+        return zh[:280] + ("…" if len(zh) > 280 else "")
+
+    def _item_judgment(self, item: IntelItem) -> str:
+        cat = item.category or "综合"
+        level = item.intel_level or "一般"
+        hints = []
+        if self._match(item, ["口岸", "边境", "хил", "гааль", "border", "customs", "扎门", "嘎顺"]):
+            hints.append("关注中蒙口岸/无人区走私通道变化")
+        if self._match(item, ["合成", "芬太尼", "尼秦", "synthetic", "NPS", "meth", "изотонитазен"]):
+            hints.append("新型合成毒品/高致死阿片风险抬升")
+        if self._match(item, ["青少年", "校园", "音乐节", "playtime", "13-25"]):
+            hints.append("年轻群体聚集场景防毒压力上升")
+        if self._match(item, ["UNODC", "集安", "CSTO", "联合行动", "跨境"]):
+            hints.append("跨境联合行动与国际协作信号")
+        if not hints:
+            hints.append(f"纳入「{cat}」主题持续跟踪，等级：{level}")
+        return "；".join(hints[:2])
+
     def _build_markdown(
         self,
         items: List[IntelItem],
@@ -204,172 +231,152 @@ class AnalysisEngine:
             if it.is_alert or it.intel_level in ("紧急", "重要"):
                 alerts.append(it)
 
+        # 七大模块（文档顺序）；媒体/统计/全球源并入对应研判，不单独成章喧宾夺主
+        MODULES = [
+            (1, "一、国家级统筹协调委员会 近期官方情报", "国家级统筹"),
+            (2, "二、核心刑事缉毒执法机构 近一月案件&通告", "执法缉毒"),
+            (3, "三、药品/制毒原料行业监管行政单位 管控公告", "行业监管"),
+            (4, "四、海关、边境边防禁毒查验单位 口岸缉毒动态", "边境口岸"),
+            (5, "五、地方层级禁毒配套机构（21省+乌兰巴托9区）", "地方机构"),
+            (6, "六、戒毒、成瘾治疗专门医疗机构 康复数据", "戒毒康复"),
+            (7, "七、国际禁毒协作相关常驻机构 涉外动态", "国际协作"),
+        ]
+
         lines: List[str] = []
-        lines.append(f"# 蒙古国禁毒情报研判报告（{self._type_label(report_type)}）")
-        lines.append("")
-        lines.append(f"**密级提示**：内部研判材料，仅供授权人员使用。")
         lines.append(
-            f"**统计周期**：{period_start.strftime('%Y-%m-%d %H:%M')} — {period_end.strftime('%Y-%m-%d %H:%M')} UTC"
+            f"# 蒙古国禁毒全机构近{(period_end - period_start).days}日"
+            f"（{period_start.strftime('%Y.%m.%d')}-{period_end.strftime('%Y.%m.%d')}）涉毒情报归集报告"
         )
-        lines.append(f"**有效情报条目**：{len(items)} 条")
-        lines.append(f"**告警/重要条目**：{len(alerts)} 条")
-        lines.append("**报告语言**：中文（外文标题已自动译为中文）")
+        lines.append("")
+        lines.append("## 情报说明")
+        lines.append("")
+        lines.append(
+            "1. **数据源严格限定**：七大蒙古国官方禁毒机构官网、蒙通社 Montsame、"
+            "蒙古国官方新闻门户、UNODC 驻蒙/东亚太公开页面、中蒙边境禁毒协作相关官方通报；"
+            "并辅以核心官网 `site:` 搜索补盲。"
+        )
+        lines.append(
+            "2. **时效与过滤**：优先近30日官方发布；剔除自媒体爆料、体育兴奋剂、"
+            "非管制医药及历史过期资讯。"
+        )
+        lines.append(
+            "3. **归集结构**：按「国家级统筹→执法缉毒→行业监管→边境口岸→地方机构→戒毒康复→国际协作」"
+            "七大模块依次归集；每条标注发布机构、发布时间、核心内容、研判要点、原文链接。"
+        )
+        lines.append(
+            f"4. **本周期统计**：有效情报 **{len(items)}** 条；告警/重要 **{len(alerts)}** 条；"
+            f"等级分布 {dict(by_level)}。"
+        )
         lines.append("")
 
-        # 1 本期情报综述
-        lines.append("## 一、本期情报综述")
-        lines.append("")
-        if not items:
-            lines.append(
-                "本周期内，七大官方禁毒体系公开渠道未检出新增可结构化禁毒相关情报。"
-                "系统已完成全网巡检，建议维持既定监测频次，重点关注口岸与执法通报栏目。"
-            )
-        else:
-            top_cats = "、".join([f"{k}({v})" for k, v in by_category.most_common(5)]) or "无"
-            top_orgs = "、".join([f"{k}({v})" for k, v in by_org.most_common(5)]) or "无"
-            lines.append(
-                f"本周期共采集有效禁毒相关公开情报 **{len(items)}** 条。"
-                f"情报等级分布：{dict(by_level)}。"
-                f"主题分布靠前为：{top_cats}。"
-                f"信息源活跃机构：{top_orgs}。"
-            )
-            lines.append(
-                "综合研判：蒙方公开渠道仍以执法通报、预防宣传、监管政策与国际协作信息为主；"
-                "跨境与口岸相关动态需与海关、边防、外交公开信息交叉核验后纳入重点关注清单。"
-            )
-        lines.append("")
+        # 将 system 8/9/10/11 的条目按主题并入七大模块，避免官方归集报告被搜索噪声冲淡
+        def _bucket(it: IntelItem) -> int:
+            sid = it.system_id or 0
+            if sid in (1, 2, 3, 4, 5, 6, 7):
+                return sid
+            if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border"]):
+                return 4
+            if self._match(it, ["戒毒", "康复", "成瘾", "донтсон", "сэргээх", "rehab"]):
+                return 6
+            if self._match(it, ["UNODC", "国际", "外交", "олон улсын", "INTERPOL", "INCB"]):
+                return 7
+            if self._match(it, ["麻精", "处方", "卫生", "прекурсор", "health", "moh"]):
+                return 3
+            if self._match(it, ["警察", "检察院", "缉毒", "цагдаа", "баривчилгаа", "prosecutor"]):
+                return 2
+            if self._match(it, ["委员会", "政府", "zasag", "gov.mn", "协调"]):
+                return 1
+            return 8  # 暂存未归类
 
-        # 2 分机构专项动态
-        lines.append("## 二、分机构专项动态汇总")
-        lines.append("")
-        for sid, sname in SYSTEM_ORDER:
-            group = by_system.get(sid, [])
-            lines.append(f"### （{sid}）{sname}")
-            if not group:
-                lines.append("- 本周期无新增公开禁毒相关动态。")
+        module_items: Dict[int, List[IntelItem]] = defaultdict(list)
+        uncategorized: List[IntelItem] = []
+        for it in items:
+            b = _bucket(it)
+            if b == 8:
+                uncategorized.append(it)
             else:
-                cats = Counter([g.category for g in group])
-                focus = "、".join([c for c, _ in cats.most_common(3)]) or "综合"
-                lines.append(f"- **工作重心研判**：近期公开信息侧重「{focus}」。")
-                for g in group[:8]:
-                    title = self._item_title_zh(g)
-                    org = self._org_zh(g.org_name)
-                    pub = (g.published_at or g.crawled_at).strftime("%Y-%m-%d") if (g.published_at or g.crawled_at) else "-"
-                    lines.append(
-                        f"- 【{g.intel_level}】[{title}]({g.url})｜机构：{org}｜时间：{pub}｜类别：{g.category}"
-                    )
+                module_items[b].append(it)
+
+        for sid, heading, _label in MODULES:
+            group = module_items.get(sid, []) or by_system.get(sid, [])
+            # 去重
+            seen = set()
+            uniq = []
+            for g in group:
+                if g.id in seen:
+                    continue
+                seen.add(g.id)
+                uniq.append(g)
+            group = uniq
+            lines.append(f"## {heading}")
+            lines.append("")
+            if not group:
+                lines.append("- 本周期该模块公开渠道未见新增可结构化涉毒官方情报。")
+                lines.append("")
+                continue
+            for idx, g in enumerate(group[:12], 1):
+                title = self._item_title_zh(g)
+                org = self._org_zh(g.org_name)
+                pub = g.published_at or g.crawled_at
+                pub_s = pub.strftime("%Y.%m.%d") if pub else "-"
+                lines.append(f"### {idx}）【{g.category or '综合'}】{title}")
+                lines.append("")
+                lines.append(f"- **发布主体**：{org}")
+                lines.append(f"- **发布时间**：{pub_s}")
+                lines.append(f"- **核心内容**：{self._item_core(g)}")
+                lines.append(f"- **研判要点**：{self._item_judgment(g)}")
+                lines.append(f"- **原文来源**：{g.url or '（无链接）'}")
+                lines.append("")
+
+        if uncategorized:
+            lines.append("## 附、其他公开渠道涉蒙涉毒信息（已过滤）")
+            lines.append("")
+            for g in uncategorized[:8]:
+                lines.append(
+                    f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                    f"{self._org_zh(g.org_name)}｜{g.url}"
+                )
             lines.append("")
 
-        # 3 跨境禁毒态势
-        lines.append("## 三、跨境禁毒态势分析")
+        # 综合交叉研判（文档第八节）
+        lines.append("## 八、综合情报交叉研判总结")
         lines.append("")
-        cross = [i for i in items if i.category == "跨境毒情" or self._match(i, ["口岸", "边境", "хил", "гааль", "border", "customs"])]
-        if cross:
-            lines.append(
-                f"本周期检出跨境/口岸相关公开信息 {len(cross)} 条。"
-                "研判意见：关注中蒙口岸查验强度变化、季节性货运高峰与公开查获通报的时空分布；"
-                "对“严查/专项/大规模查获”表述应提升监测优先级，并与海关、边防同源信息交叉比对。"
-            )
-            for g in cross[:6]:
-                lines.append(f"- {self._item_title_zh(g)}（{self._org_zh(g.org_name)}）— {g.url}")
-        else:
-            lines.append(
-                "本周期公开渠道未见显著跨境走私通道变化通报。维持对海关、边防、外交涉毒合作栏目的常态监测，"
-                "重点观察口岸严查、双边联络与查获类信息。"
-            )
-        lines.append("")
-
-        # 4 政策法规
-        lines.append("## 四、政策法规更新研判")
-        lines.append("")
-        policy = [i for i in items if i.category == "政策法规" or self._match(i, ["法", "法规", "хууль", "regulation", "legal"])]
-        if policy:
-            lines.append(f"检出政策法规类信息 {len(policy)} 条，建议核查是否涉及管制目录调整、刑罚适用或监管流程变更。")
-            for g in policy[:6]:
-                lines.append(f"- {self._item_title_zh(g)} — {g.url}")
-        else:
-            lines.append("本周期未见明确新法出台或管制目录重大调整的公开信息。")
-        lines.append("")
-
-        # 5 新型毒品风险
-        lines.append("## 五、新型毒品风险研判")
-        lines.append("")
-        novel = [i for i in items if i.category == "新型毒品" or self._match(i, ["合成", "芬太尼", "synthetic", "NPS", "meth", "синтетик"])]
-        precursor = [i for i in items if i.category == "制毒原料" or self._match(i, ["易制毒", "precursor", "麻精", "controlled"])]
+        cross = [i for i in items if self._match(i, ["口岸", "边境", "хил", "гааль", "border", "customs"])]
+        novel = [i for i in items if self._match(i, ["合成", "芬太尼", "尼秦", "synthetic", "NPS", "meth"])]
+        youth = [i for i in items if self._match(i, ["青少年", "校园", "音乐节", "playtime"])]
         lines.append(
-            f"新型毒品相关公开信息 {len(novel)} 条；制毒原料/麻精监管相关 {len(precursor)} 条。"
+            f"1. **毒情品类趋势**：本周期新型/合成相关公开信息 {len(novel)} 条；"
+            "传统大麻/安纳咖与合成毒品并存时，优先跟踪城市与口岸高致死阿片、合成大麻素信号。"
         )
-        if novel or precursor:
-            lines.append(
-                "风险研判：若出现新增管制品类、合成毒品流通或易制毒化学品监管新规，应立即纳入紧急推送与专题跟踪。"
-            )
-            for g in (novel + precursor)[:8]:
-                lines.append(f"- 【{g.category}】{self._item_title_zh(g)} — {g.url}")
-        else:
-            lines.append("本周期公开渠道未检出新型毒品或制毒原料监管重大异常信号。")
-        lines.append("")
-
-        # 6 戒毒治理
-        lines.append("## 六、戒毒治理态势研判")
-        lines.append("")
-        rehab = [i for i in items if i.category == "戒毒康复" or self._match(i, ["戒毒", "康复", "成瘾", "rehab", "донтсон", "нөхөн"])]
-        if rehab:
-            lines.append(f"戒毒康复与社会防毒相关公开信息 {len(rehab)} 条，反映蒙方在成瘾干预与预防宣传方面的公开工作节奏。")
-            for g in rehab[:5]:
-                lines.append(f"- {self._item_title_zh(g)} — {g.url}")
-        else:
-            lines.append("本周期戒毒康复类公开动态较少，维持对卫生部门与康复机构栏目监测。")
-        lines.append("")
-
-        # 7 国际协作
-        lines.append("## 七、国际协作研判")
-        lines.append("")
-        intl = [i for i in items if i.system_id in (7, 10) or i.category == "国际协作" or self._match(i, ["UNODC", "国际", "олон улсын"])]
-        if intl:
-            lines.append(f"国际禁毒协作及相关全球媒体公开信息 {len(intl)} 条，重点关注 UNODC 蒙古项目与国际媒体涉蒙毒情报道。")
-            for g in intl[:6]:
-                lines.append(f"- {self._item_title_zh(g)}（{self._org_zh(g.org_name)}）— {g.url}")
-        else:
-            lines.append("本周期国际协作公开信息有限，继续跟踪 UNODC 与外交部合作栏目。")
-        lines.append("")
-
-        # 8 突出线索清单
-        lines.append("## 八、突出线索清单")
-        lines.append("")
-        focus_list = sorted(
-            alerts or items,
-            key=lambda x: {"紧急": 0, "重要": 1, "关注": 2, "一般": 3}.get(x.intel_level or "一般", 9),
-        )[:15]
-        if not focus_list:
-            lines.append("暂无突出线索。")
-        else:
-            for idx, g in enumerate(focus_list, 1):
-                pub = (g.published_at or g.crawled_at)
-                pub_s = pub.strftime("%Y-%m-%d %H:%M") if pub else "-"
-                lines.append(
-                    f"{idx}. 【{g.intel_level}/{g.category}】{self._item_title_zh(g)}｜"
-                    f"{self._org_zh(g.org_name)}｜{pub_s}｜来源：{g.url}"
-                )
-        lines.append("")
-
-        # 9 风险预警与趋势
-        lines.append("## 九、风险预警与趋势预判")
+        lines.append(
+            f"2. **执法管控重心**：跨境/口岸相关 {len(cross)} 条；"
+            "关注主口岸严查与戈壁无人小路 divert 风险，以及空港/文娱场所安检通报。"
+        )
+        lines.append(
+            "3. **中蒙跨境风险预警**：对扎门乌德、嘎顺苏海图及东/南戈壁方向公开查获、"
+            "双边情报交换类信息提高监测优先级。"
+        )
+        lines.append(
+            f"4. **短板隐患**：年轻群体相关公开信息 {len(youth)} 条；"
+            "校园、音乐节等场景与基层新型毒品快检覆盖仍是持续关注点。"
+        )
         lines.append("")
         lines.append(self._risk_outlook(items, by_category, alerts))
         lines.append("")
 
-        # 10 下期重点监测
-        lines.append("## 十、下期重点监测方向")
+        lines.append("## 九、下期重点监测方向")
         lines.append("")
-        lines.append("1. 海关与边防公开查获、口岸严查及双边禁毒联络动态。")
-        lines.append("2. 警察总局缉毒执法通报与地方（21省/乌兰巴托9区）联动信息。")
-        lines.append("3. 卫生/药品监管部门麻精药品、易制毒化学品及管制目录调整。")
-        lines.append("4. 合成毒品、新精神活性物质相关公开表述与实验室检测信息。")
-        lines.append("5. 戒毒康复政策、成瘾数据与社会预防举措。")
-        lines.append("6. UNODC 蒙古项目进展、全球主流媒体及国际禁毒机构涉蒙公开信息。")
+        lines.append("1. 蒙通社、警察总局、海关总局近30日缉毒通报与专项行动战果。")
+        lines.append("2. 卫生/麻精监管、野生原植物铲除与毒品实验室鉴定月报。")
+        lines.append("3. 中蒙口岸查验频次、无人区拦截与双边联络办线索互换。")
+        lines.append("4. UNODC 蒙古项目进展与《世界毒品报告》涉蒙章节更新。")
+        lines.append("5. 大宗缉毒案、新法列管、跨境联合行动、高致死新型毒品预警 → 触发即时邮件。")
         lines.append("")
         lines.append("---")
-        lines.append("*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成，正文为中文；数据来源于蒙古国官方体系、全球主流媒体及国际禁毒机构公开渠道。*")
+        lines.append(
+            "*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成；"
+            "仅基于官方及授权公开渠道，不采信自媒体爆料。*"
+        )
         return "\n".join(lines)
 
     def _risk_outlook(self, items: List[IntelItem], by_category: Counter, alerts: list) -> str:

@@ -40,20 +40,24 @@ class Settings(BaseSettings):
     crawl_loose_filter: bool = True
     # SSL 异常站点仍尝试抓取
     crawl_ssl_verify: bool = False
-    # 过期阈值（天）。蒙古涉毒公开新闻稀疏，默认 365 天；过严会导致库空
-    crawl_max_age_days: int = 365
-    # 巡检时是否继续扫官网（搜索聚合已覆盖海量资讯；官网较慢可关）
-    enable_official_crawl: bool = False  # 默认先跑关键词搜索提速；需要时可开
+    # 过期阈值（天）：文档要求近30日官方发布
+    crawl_max_age_days: int = 30
+    # 巡检时是否继续扫官网（文档要求直采官方种子；默认开启）
+    enable_official_crawl: bool = True
     # 是否采集检察院/海关/PDF 等官方统计
     enable_official_stats: bool = True
     # 是否采集 Reddit/论坛/补充搜索引擎
     enable_forum_search: bool = True
     # 定时任务默认只抓新闻（长期监测）；每天固定时刻再跑全量研判
     crawl_mode: str = "news"  # news | full
-    # Google News 时间窗。7d/30d 实测几乎 0 条；新闻监测用 1y，全量/论坛用 1y
-    news_when: str = "1y"  # 1d / 7d / 30d / 90d / 1y
-    full_when: str = "1y"
-    forum_when: str = "1y"
+    # Google News / 官网 site: 时间窗：文档要求近30日
+    news_when: str = "30d"
+    full_when: str = "30d"
+    forum_when: str = "30d"
+    # 新闻监测轮也跑核心官网增量（否则只能靠搜索聚合）
+    enable_core_official_in_news: bool = True
+    crawl_max_pages_official: int = 20
+    crawl_max_pages_core: int = 12
 
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465

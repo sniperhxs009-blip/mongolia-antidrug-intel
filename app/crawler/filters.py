@@ -159,6 +159,15 @@ NEGATIVE_PATTERNS = [
     r"бурят",
     r"乌兰乌德",
     r"布里亚特",
+    # 体育兴奋剂 / 非管制医药噪声（文档要求剔除）
+    r"\bdoping\b",
+    r"\bwada\b",
+    r"\banti[- ]?doping\b",
+    r"兴奋剂",
+    r"反兴奋剂",
+    r"\bsteroide?s?\b",
+    r"анаболик",
+    r"допинг",
 ]
 
 

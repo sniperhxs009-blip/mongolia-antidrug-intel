@@ -1,6 +1,8 @@
 # 蒙古国禁毒情报数据源：七大官方体系 + 全国媒体
 # 关键词与搜索任务见 config/drug_lexicon.py
+# 文档指定核心官方种子见 config/core_official.py
 
+from config.core_official import CORE_OFFICIAL_SOURCES, build_core_site_search_queries
 from config.drug_lexicon import (
     ALERT_KEYWORDS,
     all_drug_keywords,
@@ -8,6 +10,8 @@ from config.drug_lexicon import (
 )
 
 SOURCES = [
+    # ========== 文档核心官方种子（优先）==========
+    *CORE_OFFICIAL_SOURCES,
     # ========== 1. 国家级禁毒统筹委员会体系 ==========
     {
         "system_id": 1,
@@ -16,7 +20,7 @@ SOURCES = [
         "org_name_mn": "Мансууруулах бодисын эсрэг үндэсний зохицуулах хороо",
         "base_url": "https://www.police.gov.mn",
         "seed_paths": ["/"],
-        "keywords_extra": ["мансууруулах", "хар тамхи"],
+        "keywords_extra": ["мансууруулах", "хар тамхи", "тэмцэх"],
         "lang": "mn",
         "source_type": "official",
     },
@@ -187,6 +191,9 @@ SOURCES = [
         "org_name_mn": "UNODC",
         "base_url": "https://www.unodc.org",
         "seed_paths": [
+            "/mongolia/",
+            "/unodc/en/easternasiaandpacific/mongolia.html",
+            "/easternasiaandpacific/mongolia.html",
             "/unodc/en/frontpage.html",
             "/easternasiaandpacific/index.html",
             "/unodc/en/drug-trafficking/index.html",
@@ -297,8 +304,8 @@ SOURCES = [
     },
 ]
 
-# 由词库动态生成搜索任务（全量也强制近期 when）
-SEARCH_FEEDS = build_search_queries(mode="full", when="1y")
+# 由词库动态生成搜索任务（默认近30日官方窗口）
+SEARCH_FEEDS = build_search_queries(mode="full", when="30d") + build_core_site_search_queries("30d")
 
 DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS
@@ -307,6 +314,7 @@ ALLOWED_DOMAINS = [
     "police.gov.mn", "www.police.gov.mn",
     "ulaanbaatar.mn", "www.ulaanbaatar.mn",
     "mohs.mn", "www.mohs.mn", "moh.mn", "www.moh.mn",
+    "health.gov.mn", "www.health.gov.mn",
     "gia.gov.mn", "www.gia.gov.mn",
     "prosecutor.mn", "www.prosecutor.mn",
     "gs.gov.mn", "www.gs.gov.mn",

@@ -89,15 +89,24 @@ class SearchFeedCollector:
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
         if mode == "news":
-            when = getattr(settings, "news_when", "1y") or "1y"
+            when = getattr(settings, "news_when", "30d") or "30d"
             feeds = build_search_queries(mode="news", when=when)
             phase = "最新新闻监测"
             msg = f"启动新闻监测（近{when}），共 {len(feeds)} 路任务"
         else:
-            when = getattr(settings, "full_when", "1y") or "1y"
+            when = getattr(settings, "full_when", "30d") or "30d"
             feeds = build_search_queries(mode="full", when=when)
             phase = "关键词全量搜索"
             msg = f"启动全量搜索（近{when}，含论坛/多引擎），共 {len(feeds)} 路任务"
+        # 文档核心官网 site: 搜索（补 Google 泛搜盲区）
+        try:
+            from config.core_official import build_core_site_search_queries
+
+            core_feeds = build_core_site_search_queries(when=when)
+            feeds = list(feeds) + list(core_feeds)
+            msg = f"{msg}；另含核心官网 site 搜索 {len(core_feeds)} 路"
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("core official search feeds skipped: %s", exc)
         # 论坛开关
         if not getattr(settings, "enable_forum_search", True):
             feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
