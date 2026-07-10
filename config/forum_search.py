@@ -1,7 +1,9 @@
 """
 论坛 / 社区 / 补充搜索引擎配置
-覆盖：Reddit、全球论坛讨论、DuckDuckGo/Bing 新闻 RSS 等
+覆盖：Reddit、知乎、贴吧、药物论坛、DuckDuckGo/Bing 新闻 RSS 等
 时效由调用方传入 when（如 7d / 30d / 1y）；蒙古涉毒信源稀疏，默认宜用 1y
+
+优化说明：翻倍检索任务、延长时间窗、增加蒙古本地话题，提升论坛收录量。
 """
 from __future__ import annotations
 
@@ -22,7 +24,7 @@ def _when_engine_params(when: str) -> Tuple[str, str, str]:
         return "month", "30", "m"
     if w in ("90d",):
         return "year", "30", "y"
-    # 1y / default
+    # 1y / default — 拉长窗口以覆盖稀疏信源
     return "year", "30", "y"
 
 # 允许入库的论坛/社区域名
@@ -42,7 +44,7 @@ FORUM_ALLOWED_DOMAINS = [
     "v2ex.com", "www.v2ex.com",
     "hackernews.com", "news.ycombinator.com",
     "lesswrong.com",
-    "bluelight.org", "www.bluelight.org",  # 药物讨论论坛（公开帖）
+    "bluelight.org", "www.bluelight.org",
     "drugs-forum.com", "www.drugs-forum.com",
     "erowid.org", "www.erowid.org",
 ]
@@ -50,7 +52,8 @@ FORUM_ALLOWED_DOMAINS = [
 DRUG_CORE = (
     "drug OR narcotic OR methamphetamine OR meth OR heroin OR cannabis OR marijuana OR "
     "fentanyl OR ketamine OR \"drug trafficking\" OR \"drug smuggling\" OR NPS OR "
-    "\"synthetic cannabinoid\" OR \"illicit drug\""
+    "\"synthetic cannabinoid\" OR \"illicit drug\" OR nitazene OR \"crystal meth\" OR "
+    "annaka OR \"caffeine sodium benzoate\" OR spice OR K2"
 )
 
 
@@ -62,15 +65,21 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
     when_suffix = f" when:{when}"
     reddit_t, bing_interval, ddg_df = _when_engine_params(when)
 
-    # —— Reddit 定向（Google News + 网页向查询）——
+    # —— Reddit 定向（翻倍）——
     reddit_queries = [
         f'site:reddit.com Mongolia ({DRUG_CORE}){when_suffix}',
         f'site:reddit.com Ulaanbaatar (drug OR meth OR cannabis OR heroin OR fentanyl){when_suffix}',
         f'site:reddit.com Mongolia (methamphetamine OR "crystal meth" OR "drug bust"){when_suffix}',
         f'site:reddit.com Mongolia ("drug trafficking" OR smuggling OR narcotics){when_suffix}',
+        f'site:reddit.com Mongolia (nitazene OR fentanyl OR NPS OR "synthetic cannabinoid"){when_suffix}',
+        f'site:reddit.com (Zamyn-Uud OR "Gashuun Sukhait" OR Erenhot) (drug OR narcotic){when_suffix}',
+        f'site:reddit.com r/mongolia (drug OR meth OR cannabis OR laws){when_suffix}',
+        f'site:reddit.com Mongolia (annaka OR "caffeine sodium benzoate" OR "synthetic cannabinoid" OR spice){when_suffix}',
+        f'site:zhihu.com 蒙古国 (安纳咖 OR 合成大麻素 OR 尼秦 OR 芬太尼){when_suffix}',
+        f'site:bluelight.org Mongolia (meth OR fentanyl OR cannabis OR NPS){when_suffix}',
     ]
     if news_mode:
-        reddit_queries = reddit_queries[:3]
+        reddit_queries = reddit_queries[:8]
     for q in reddit_queries:
         tasks.append({
             "system_id": SYSTEM_ID,
@@ -85,7 +94,6 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "tier": "forum",
             "source_kind": "forum",
         })
-        # 同步用 Google 网页搜索找帖子（News RSS 对 Reddit 覆盖不全）
         tasks.append({
             "system_id": SYSTEM_ID,
             "system_name": SYSTEM_NAME,
@@ -100,14 +108,17 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "source_kind": "forum",
         })
 
-    # —— Reddit JSON 搜索 API（公开）——
+    # —— Reddit JSON 搜索 API ——
     reddit_api_qs = [
         "Mongolia drug OR meth OR heroin OR cannabis OR fentanyl",
         "Ulaanbaatar drug OR meth OR narcotic",
         "Mongolia \"drug trafficking\" OR smuggling narcotic",
+        "Mongolia nitazene OR fentanyl OR NPS",
+        "Mongolia customs OR border drug seizure",
+        "r/mongolia cannabis OR meth OR drugs",
     ]
     if news_mode:
-        reddit_api_qs = reddit_api_qs[:2]
+        reddit_api_qs = reddit_api_qs[:4]
     for q in reddit_api_qs:
         tasks.append({
             "system_id": SYSTEM_ID,
@@ -124,7 +135,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "source_kind": "forum",
         })
 
-    # —— 其他论坛 / 社区 ——
+    # —— 其他论坛 / 社区（翻倍）——
     forum_sites = [
         ("Quora", "site:quora.com"),
         ("Bluelight", "site:bluelight.org"),
@@ -132,33 +143,67 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
         ("Medium", "site:medium.com"),
         ("知乎", "site:zhihu.com"),
         ("贴吧", "site:tieba.baidu.com"),
+        ("Erowid", "site:erowid.org"),
+        ("豆瓣", "site:douban.com"),
     ]
     if news_mode:
-        forum_sites = forum_sites[:4]
+        forum_sites = forum_sites[:6]
     for name, site in forum_sites:
-        q = f"Mongolia ({DRUG_CORE}) {site}{when_suffix}"
+        qs = [
+            f"Mongolia ({DRUG_CORE}) {site}{when_suffix}",
+            f"蒙古国 (毒品 OR 缉毒 OR 冰毒 OR 芬太尼) {site}{when_suffix}",
+        ]
+        if name in ("知乎", "贴吧", "豆瓣"):
+            qs = [
+                f"蒙古国 (毒品 OR 缉毒 OR 芬太尼 OR 安纳咖 OR 口岸) {site}{when_suffix}",
+                f"乌兰巴托 OR 扎门乌德 (毒品 OR 缉毒 OR 走私) {site}{when_suffix}",
+            ]
+        for q in qs:
+            tasks.append({
+                "system_id": SYSTEM_ID,
+                "system_name": SYSTEM_NAME,
+                "org_name": f"论坛·{name}",
+                "query": q,
+                "hl": "en" if name not in ("知乎", "贴吧", "豆瓣") else "zh-CN",
+                "gl": "us" if name not in ("知乎", "贴吧", "豆瓣") else "cn",
+                "ceid": "US:en" if name not in ("知乎", "贴吧", "豆瓣") else "CN:zh-Hans",
+                "engine": "web_search",
+                "require_mongolia": True,
+                "tier": "forum",
+                "source_kind": "forum",
+            })
+
+    # —— 蒙古本地话题补盲 ——
+    local_topics = [
+        f'Монгол (мансууруулах OR "хар тамхи" OR фентанил) (reddit OR forum OR хэлэлцүүлэг){when_suffix}',
+        f'Ulaanbaatar (\"drug laws\" OR \"is weed legal\" OR meth OR cannabis){when_suffix}',
+        f'\"蒙古国\" (知乎 OR 贴吧 OR 论坛) (毒品 OR 缉毒 OR 安纳咖){when_suffix}',
+    ]
+    for q in local_topics:
         tasks.append({
             "system_id": SYSTEM_ID,
             "system_name": SYSTEM_NAME,
-            "org_name": f"论坛·{name}",
+            "org_name": "论坛·蒙古本地话题",
             "query": q,
-            "hl": "en" if name not in ("知乎", "贴吧") else "zh-CN",
-            "gl": "us" if name not in ("知乎", "贴吧") else "cn",
-            "ceid": "US:en" if name not in ("知乎", "贴吧") else "CN:zh-Hans",
+            "hl": "en",
+            "gl": "us",
+            "ceid": "US:en",
             "engine": "web_search",
             "require_mongolia": True,
             "tier": "forum",
             "source_kind": "forum",
         })
 
-    # —— DuckDuckGo News RSS（补充引擎）——
+    # —— DuckDuckGo News RSS ——
     ddg_queries = [
-        f"Mongolia narcotic OR methamphetamine OR heroin OR cannabis",
-        f"Mongolia \"drug trafficking\" OR \"drug smuggling\" OR fentanyl",
-        f"Ulaanbaatar drug OR meth OR seizure",
+        "Mongolia narcotic OR methamphetamine OR heroin OR cannabis",
+        "Mongolia \"drug trafficking\" OR \"drug smuggling\" OR fentanyl",
+        "Ulaanbaatar drug OR meth OR seizure",
+        "Mongolia nitazene OR \"synthetic cannabinoid\" OR NPS",
+        "Zamyn-Uud OR Erenhot drug OR narcotic seizure",
     ]
     if news_mode:
-        ddg_queries = ddg_queries[:2]
+        ddg_queries = ddg_queries[:3]
     for q in ddg_queries:
         tasks.append({
             "system_id": SYSTEM_ID,
@@ -174,7 +219,6 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "tier": "forum",
             "source_kind": "search_engine",
         })
-        # DDG HTML 新闻页兜底
         tasks.append({
             "system_id": SYSTEM_ID,
             "system_name": SYSTEM_NAME,
@@ -190,10 +234,12 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "source_kind": "search_engine",
         })
 
-    # —— Bing News RSS（补充）——
+    # —— Bing News RSS ——
     bing_queries = [
         "Mongolia drug OR narcotic OR methamphetamine",
         "Mongolia heroin OR fentanyl OR cannabis trafficking",
+        "Mongolia customs drug seizure OR border narcotic",
+        "Ulaanbaatar meth OR fentanyl OR cannabis",
     ]
     for q in bing_queries:
         tasks.append({
@@ -215,10 +261,11 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
             "source_kind": "search_engine",
         })
 
-    # —— Google News 再补一轮「论坛讨论」语义 ——
+    # —— Google News 讨论语义 ——
     discuss_qs = [
         f'Mongolia (reddit OR forum OR discussion) ({DRUG_CORE}){when_suffix}',
         f'"Mongolia" (\"I tried\" OR \"anyone know\" OR \"drug laws\") (cannabis OR meth OR drugs){when_suffix}',
+        f'Mongolia (bluelight OR \"drugs forum\") (meth OR fentanyl OR cannabis){when_suffix}',
     ]
     if not news_mode:
         for q in discuss_qs:

@@ -175,7 +175,40 @@ def extract_stats_from_text(
             if v and 1 <= v <= 10000:
                 add(METRIC_SEIZURE, v, "次", period, raw, 0.7)
 
-    return out[:40]
+    # 6) 查获量（公斤/克/吨）
+    for m in re.finditer(
+        r"(\d{1,6}(?:[.,]\d+)?)\s*(кг|kg|kilogram|公斤|克|g|吨|tonnes?).{0,30}?"
+        r"(мансууруулах|narcotic|meth|heroin|cannabis|毒品|冰毒|海洛因)|"
+        r"(мансууруулах|narcotic|毒品|查获).{0,40}?(\d{1,6}(?:[.,]\d+)?)\s*(кг|kg|公斤|吨)",
+        blob,
+        flags=re.IGNORECASE,
+    ):
+        raw = m.group(0)
+        nums = re.findall(r"\d{1,6}(?:[.,]\d+)?", raw)
+        if nums:
+            v = _num(nums[0])
+            if v and 0 < v < 1_000_000:
+                unit = "kg" if re.search(r"кг|kg|公斤", raw, re.I) else (
+                    "t" if re.search(r"吨|ton", raw, re.I) else "g"
+                )
+                add("查获量", v, unit, period, raw, 0.75)
+
+    # 7) 同比案件/查获英文
+    for m in re.finditer(
+        r"(year[- ]on[- ]year|yoy|compared to).{0,40}?(\d{1,3}(?:[.,]\d+)?)\s*%|"
+        r"(\d{1,3}(?:[.,]\d+)?)\s*%\s*(year[- ]on[- ]year|yoy|increase|decrease)",
+        blob,
+        flags=re.IGNORECASE,
+    ):
+        raw = m.group(0)
+        nums = re.findall(r"\d{1,3}(?:[.,]\d+)?", raw)
+        if nums:
+            v = _num(nums[0])
+            if v is not None and v <= 500:
+                sign = -1 if re.search(r"decrease|decline|下降", raw, re.I) else 1
+                add(METRIC_GROWTH, sign * v, "%", period, raw, 0.7)
+
+    return out[:60]
 
 
 def stats_fingerprint(metric_name: str, value: float, period: str, url: str) -> str:

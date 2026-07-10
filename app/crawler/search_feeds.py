@@ -22,13 +22,14 @@ from app.crawler.filters import (
     is_critical,
     is_drug_related,
     is_mongolia_country_related,
+    is_unodc_mongolia_signal,
     normalize_text,
     translate_to_zh,
 )
-from app.crawler.http_client import build_httpx_client
+from app.crawler.http_client import build_httpx_client, pick_user_agent
 from app.db.models import IntelItem
 from config.drug_lexicon import build_search_queries
-from config.sources import SEARCH_FEEDS
+from config.core_official import is_forbidden_url, sanitize_store_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -93,52 +94,39 @@ class SearchFeedCollector:
             (getattr(settings, "news_when", "1y") if mode == "news" else getattr(settings, "full_when", "1y"))
             or "1y"
         )
-        # 混合模式：清单内全部官网 site:/站内检索为主（快、覆盖全），不再跑超大泛词库
-        from config.core_official import build_core_site_search_queries
+        # 【增产修复】原缺陷：news 只取极少补盲、剔除 site:gov.mn、论坛几乎不跑
+        from config.core_official import build_core_site_search_queries, is_gov_mn_direct_url
 
         core_feeds = build_core_site_search_queries(when=when)
-        zh_news = [
-            f
-            for f in build_search_queries(mode="news", when=when)
-            if f.get("engine") == "google_news"
-            and (f.get("hl") or "").startswith("zh")
-            and "蒙古" in (f.get("query") or "")
-        ][:6]
-        en_news = [
-            f
-            for f in build_search_queries(mode="news", when=when)
-            if f.get("engine") == "google_news"
-            and (f.get("hl") or "").startswith("en")
-            and "Mongolia" in (f.get("query") or "")
-        ][:4]
-        feeds = list(core_feeds) + zh_news + en_news
-        if mode == "full" and getattr(settings, "enable_forum_search", False):
-            extra = [
-                f for f in build_search_queries(mode="full", when=when)
-                if f.get("system_id") == 11
-            ][:6]
-            feeds.extend(extra)
-        phase = "清单官网关键词检索"
-        msg = (
-            f"检索优先（近{when}）：清单站点 {len(core_feeds)} 路"
-            f" + 中英补盲 {len(zh_news)+len(en_news)} 路"
-        )
-        # 论坛开关
-        if not getattr(settings, "enable_forum_search", True):
-            feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
-        # 黑名单 URL 任务直接剔除（含 site:*.gov.mn 查询）
-        try:
-            from config.core_official import is_forbidden_url
+        lex_mode = "full" if mode == "full" else "news"
+        lexicon_feeds = build_search_queries(mode=lex_mode, when=when)
+        feeds = list(core_feeds) + list(lexicon_feeds)
+        forum_when = getattr(settings, "forum_when", None) or "1y"
+        if getattr(settings, "enable_forum_search", True):
+            from config.forum_search import build_forum_search_queries
 
+            # 论坛时间窗强制 1y，news/full 均执行
+            feeds.extend(build_forum_search_queries(mode=lex_mode, when=forum_when))
+        # 去重
+        seen_keys: Set[str] = set()
+        uniq_feeds = []
+        for f in feeds:
+            key = f"{f.get('engine')}|{f.get('query')}|{f.get('search_url')}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            uniq_feeds.append(f)
+        feeds = uniq_feeds
+        phase = "关键词全渠道检索"
+        msg = f"检索任务 {len(feeds)} 路（when:{when}，含快照/论坛/媒体）"
+        # 仅剔除 search_url 直连 gov.mn；保留 query 内 site:*.gov.mn 快照检索
+        try:
             def _feed_ok(f: dict) -> bool:
-                blob = " ".join(
-                    str(f.get(k) or "") for k in ("search_url", "query", "org_name")
-                ).lower()
-                if "site:" in blob and ".gov.mn" in blob:
-                    return False
+                su = f.get("search_url") or ""
+                blob = " ".join(str(f.get(k) or "") for k in ("search_url", "query", "org_name")).lower()
                 if "shturl" in blob:
                     return False
-                if is_forbidden_url(f.get("search_url") or ""):
+                if su and is_gov_mn_direct_url(su):
                     return False
                 return True
 
@@ -233,47 +221,76 @@ class SearchFeedCollector:
         return published < datetime.utcnow() - timedelta(days=max_days)
 
     def _ingest_google_feed(self, client: httpx.Client, feed: dict, url: str) -> None:
-        resp = client.get(url)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"HTTP {resp.status_code}")
-        parsed = feedparser.parse(resp.text)
-        # 新闻监测取更少条目，加快轮询；全量略多
-        cap = 18 if (feed.get("tier") in ("news", "forum")) else 30
-        for entry in (parsed.entries or [])[:cap]:
-            title = normalize_text(getattr(entry, "title", "") or "")
-            link = getattr(entry, "link", "") or ""
-            raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
-            summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
-            if not title:
-                continue
-            real_url = _resolve_google_article_url(link, client)
-            published = None
-            if getattr(entry, "published_parsed", None):
-                try:
-                    published = datetime(*entry.published_parsed[:6])
-                except Exception:
-                    published = None
-            if self._too_old(published):
-                self.stats["items_filtered"] += 1
-                continue
-            self._save_item(
-                feed=feed,
-                title=title,
-                summary=summary,
-                url=real_url or link,
-                published=published,
-                require_mongolia=bool(feed.get("require_mongolia", True)),
-                force_drug=False,
-            )
+        # 取消 18/30 硬截断；尝试最多 8 轮（RSS 主结果 + start 偏移）
+        import random
+        import time
+
+        seen_links: Set[str] = set()
+        for page in range(8):
+            page_url = url
+            if page > 0:
+                page_url = (
+                    "https://news.google.com/rss/search?"
+                    f"q={quote_plus(feed['query'])}&hl={feed['hl']}&gl={feed['gl']}"
+                    f"&ceid={quote_plus(feed['ceid'])}&start={page * 10}"
+                )
+            client.headers["User-Agent"] = pick_user_agent()
+            try:
+                resp = client.get(page_url)
+            except Exception:
+                break
+            if resp.status_code >= 400:
+                break
+            parsed = feedparser.parse(resp.text)
+            entries = list(parsed.entries or [])
+            if not entries:
+                break
+            new_on_page = 0
+            for entry in entries:
+                title = normalize_text(getattr(entry, "title", "") or "")
+                link = getattr(entry, "link", "") or ""
+                raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
+                summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
+                if not title:
+                    continue
+                real_url = _resolve_google_article_url(link, client)
+                store_url = sanitize_store_url(real_url or link, link)
+                if store_url in seen_links:
+                    continue
+                seen_links.add(store_url)
+                new_on_page += 1
+                published = None
+                if getattr(entry, "published_parsed", None):
+                    try:
+                        published = datetime(*entry.published_parsed[:6])
+                    except Exception:
+                        published = None
+                # 无日期不丢弃
+                if published is not None and self._too_old(published):
+                    self.stats["items_filtered"] += 1
+                    continue
+                self._save_item(
+                    feed=feed,
+                    title=title,
+                    summary=summary or title,
+                    url=store_url,
+                    published=published,
+                    require_mongolia=bool(feed.get("require_mongolia", True)),
+                    force_drug=False,
+                )
+            if page > 0 and new_on_page == 0:
+                break
+            time.sleep(random.uniform(0.08, 0.35))
 
     def _ingest_rss_url(self, client: httpx.Client, feed: dict, url: str) -> None:
         if not url:
             return
+        client.headers["User-Agent"] = pick_user_agent()
         resp = client.get(url)
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")
         parsed = feedparser.parse(resp.text)
-        for entry in (parsed.entries or [])[:25]:
+        for entry in (parsed.entries or []):
             title = normalize_text(getattr(entry, "title", "") or "")
             link = getattr(entry, "link", "") or ""
             raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
@@ -286,14 +303,14 @@ class SearchFeedCollector:
                     published = datetime(*entry.published_parsed[:6])
                 except Exception:
                     published = None
-            if self._too_old(published):
+            if published is not None and self._too_old(published):
                 self.stats["items_filtered"] += 1
                 continue
             self._save_item(
                 feed=feed,
                 title=title,
-                summary=summary,
-                url=link,
+                summary=summary or title,
+                url=sanitize_store_url(link, link),
                 published=published,
                 require_mongolia=bool(feed.get("require_mongolia", True)),
             )
@@ -316,19 +333,34 @@ class SearchFeedCollector:
                 "https://www.reddit.com/search.json?"
                 f"q={quote(feed.get('query') or '')}&sort=new&t={t}&limit=25"
             )
-        headers = {"User-Agent": "MN-AntiDrug-IntelBot/1.0 (osint research)"}
-        resp = client.get(url, headers=headers)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"HTTP {resp.status_code}")
+        headers = {"User-Agent": pick_user_agent()}
+        last_err = None
+        resp = None
+        for attempt in range(3):
+            try:
+                headers = {"User-Agent": pick_user_agent()}
+                resp = client.get(url, headers=headers)
+                if resp.status_code < 500:
+                    break
+                last_err = RuntimeError(f"HTTP {resp.status_code}")
+            except Exception as exc:  # noqa: BLE001
+                last_err = exc
+            import time
+            time.sleep(0.5 * (2 ** attempt))
+        if resp is None or resp.status_code >= 400:
+            raise last_err or RuntimeError("reddit failed")
         data = resp.json()
         children = ((data.get("data") or {}).get("children")) or []
-        for child in children[:25]:
+        for child in children[:40]:
             d = child.get("data") or {}
             title = normalize_text(d.get("title") or "")
             permalink = d.get("permalink") or ""
             link = ("https://www.reddit.com" + permalink) if permalink.startswith("/") else (d.get("url") or "")
             summary = normalize_text((d.get("selftext") or "")[:500])
             if not title:
+                continue
+            # 短快讯：≥100 字符或标题涉毒即保留（取消过严长度限制）
+            if len(title) + len(summary) < 20:
                 continue
             published = None
             created = d.get("created_utc")
@@ -337,7 +369,7 @@ class SearchFeedCollector:
                     published = datetime.utcfromtimestamp(float(created))
                 except Exception:
                     published = None
-            if self._too_old(published):
+            if published is not None and self._too_old(published):
                 self.stats["items_filtered"] += 1
                 continue
             self._save_item(
@@ -447,18 +479,38 @@ class SearchFeedCollector:
             if count >= 15:
                 break
 
-    def _ingest_site_search(self, client: httpx.Client, feed: dict) -> None:
-        search_url = feed.get("search_url")
-        if not search_url:
-            return
-        resp = client.get(search_url)
-        if resp.status_code >= 400:
-            raise RuntimeError(f"HTTP {resp.status_code}")
-        soup = BeautifulSoup(resp.text, "lxml")
-        for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
-            tag.decompose()
+    def _site_search_next_urls(self, soup: BeautifulSoup, current_url: str) -> list:
+        """解析站内搜索分页链接（page=/p=/offset= 等）。"""
+        nexts = []
+        for a in soup.find_all("a", href=True):
+            href = (a.get("href") or "").strip()
+            label = normalize_text(a.get_text(" ", strip=True)).lower()
+            full = urljoin(current_url, href)
+            if full == current_url:
+                continue
+            q = (urlparse(full).query or "").lower()
+            path = (urlparse(full).path or "").lower()
+            if any(x in q for x in ("page=", "p=", "offset=", "start=", "paged=")):
+                nexts.append(full)
+            elif re.search(r"/page/\d+", path) or label in (
+                "next", "›", "»", "дараах", "下一页", "дараагийн", "хуудас",
+                "мэдээ", "older", "more",
+            ):
+                nexts.append(full)
+            # 蒙语分页常见：?page= / хуудас=
+            if "хуудас" in q or "хуудас" in path or "мэдээ" in label and any(c.isdigit() for c in label):
+                nexts.append(full)
+        # 去重保序
+        seen = set()
+        out = []
+        for u in nexts:
+            if u in seen:
+                continue
+            seen.add(u)
+            out.append(u)
+        return out[:8]
 
-        query = (feed.get("query") or "").lower()
+    def _collect_site_search_candidates(self, soup: BeautifulSoup, search_url: str, query: str) -> list:
         candidates = []
         for a in soup.find_all("a", href=True):
             href = a["href"].strip()
@@ -468,12 +520,12 @@ class SearchFeedCollector:
             full = urljoin(search_url, href)
             host = urlparse(full).netloc.lower()
             if not any(x in host for x in (
-                "montsame.mn", "nncc626.com", "chinanews.com", "unodc.org",
+                "montsame.mn", "gogo.mn", "ikon.mn", "news.mn",
+                "nncc626.com", "chinanews.com", "unodc.org",
                 "mongolia.un.org", "nmg.110.gov.cn", "odkb-csto.org",
                 "scoec.gov.cn", "mongolnews.mn", "ubpost",
             )):
                 continue
-            from config.core_official import is_forbidden_url
             if is_forbidden_url(full):
                 continue
             path = urlparse(full).path.lower()
@@ -481,39 +533,70 @@ class SearchFeedCollector:
                 continue
             if any(x in path for x in ("/login", "/tag", "/category", "/corner", "/topic", "/author", "/#")):
                 continue
-            # 只要文章型路径
             article_ok = any(
                 x in path
-                for x in ("/n/", "/r/", "/a/", "/news/", "/post/", "/article/", "/mn/", "/en/")
+                for x in ("/n/", "/r/", "/a/", "/news/", "/post/", "/article/", "/mn/", "/en/", "/cn/")
             )
             if not article_ok:
                 continue
-            # 标题必须涉毒，或明确包含本轮搜索词 —— 禁止把侧边栏热搜一并入库
+            # 原缺陷：标题强制涉毒导致专题列表漏采；现：标题涉毒或含本轮检索词即可
             title_blob = text.lower()
-            if not is_drug_related(text, loose=False) and query not in title_blob:
-                continue
-            # 即使包含查询词，也必须通过严格涉毒判定
-            if not is_drug_related(text, loose=False):
+            if not is_drug_related(text, loose=True) and query not in title_blob:
                 continue
             candidates.append((text, full))
+        return candidates
+
+    def _ingest_site_search(self, client: httpx.Client, feed: dict) -> None:
+        """站内搜索：自动翻页最多 10 页，每页候选汇总后取 30×页 上限。"""
+        search_url = feed.get("search_url")
+        if not search_url:
+            return
+        query = (feed.get("query") or "").lower()
+        pages_to_visit = [search_url]
+        visited = set()
+        all_candidates = []
+        max_pages = 10  # 原 5 → 10
+
+        while pages_to_visit and len(visited) < max_pages:
+            page_url = pages_to_visit.pop(0)
+            if page_url in visited:
+                continue
+            visited.add(page_url)
+            client.headers["User-Agent"] = pick_user_agent()
+            try:
+                resp = client.get(page_url)
+            except Exception:
+                continue
+            if resp.status_code >= 400:
+                if page_url == search_url:
+                    raise RuntimeError(f"HTTP {resp.status_code}")
+                continue
+            soup = BeautifulSoup(resp.text, "lxml")
+            for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
+                tag.decompose()
+            page_cands = self._collect_site_search_candidates(soup, page_url, query)
+            all_candidates.extend(page_cands[:30])  # 每页最多 30 条
+            for nxt in self._site_search_next_urls(soup, page_url):
+                if nxt not in visited and nxt not in pages_to_visit:
+                    pages_to_visit.append(nxt)
 
         seen = set()
         uniq = []
-        for title, url in candidates:
+        for title, url in all_candidates:
+            # 仅完全相同 URL 去重；同案不同链接保留
             if url in seen:
                 continue
             seen.add(url)
             uniq.append((title, url))
 
-        for title, url in uniq[:30]:
-            # 禁止把搜索词写入摘要，否则会「关键词污染」导致金融监管等误入库
+        for title, url in uniq[:300]:
             self._save_item(
                 feed=feed,
                 title=title,
                 summary=title,
                 url=url,
                 published=None,
-                require_mongolia=False,  # 蒙古媒体站，地域默认成立
+                require_mongolia=False,
                 force_drug=False,
             )
 
@@ -531,39 +614,47 @@ class SearchFeedCollector:
         summary = normalize_text(summary)
         if not title:
             return
-        if not is_allowed_url(url) and not (url or "").startswith("search://"):
+        # 短快讯：标题+摘要 ≥100 或标题本身涉毒即可（取消 250 字符门槛）
+        if len(title) + len(summary) < 100 and not is_drug_related(title, loose=True):
+            if len(title) < 12:
+                self.stats["items_filtered"] += 1
+                return
+        url = sanitize_store_url(url or "", url or "")
+        # 允许谷歌新闻包装链；禁止未改写的 gov.mn 直链
+        if not is_allowed_url(url) and not (url or "").startswith("search://") and not (url or "").startswith("https://news.google.com"):
             self.stats["items_filtered"] += 1
             return
         body = f"{title}\n{summary}"
         body_l = body.lower()
 
-        # —— 排除中国内蒙古 / 俄布里亚特乌兰乌德等误伤 ——
-        if not is_mongolia_country_related(body) and require_mongolia:
-            # 蒙语国内媒体站内搜不强制国名，见下方 req_mn
-            pass
-        if "内蒙古" in body and "蒙古国" not in body:
+        if "内蒙古" in body and "蒙古国" not in body and not any(x in body for x in ("中蒙", "扎门乌德", "甘其毛都")):
             self.stats["items_filtered"] += 1
             return
         if re.search(r"\binner mongolia\b", body_l):
             self.stats["items_filtered"] += 1
             return
-        # 布里亚特/乌兰乌德本地案（香烟、弹药、本地大麻）一律丢弃
+        # 布里亚特/赤塔等：无毒品词才删（有强毒词的跨境案保留）
         if re.search(
-            r"улан[- ]?удэ|ulan[- ]?ude|buryat|бурят|乌兰乌德|布里亚特",
+            r"улан[- ]?удэ|ulan[- ]?ude|buryat|бурят|乌兰乌德|布里亚特|"
+            r"chita|чита|kyakhta|кяхта|забайкал|zabaikal|后贝加尔|恰克图|赤塔",
             body_l,
             flags=re.I,
         ):
-            if not re.search(r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс", body_l, flags=re.I):
+            if not is_drug_related(body, loose=True) and not re.search(
+                r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс|\bmongolia\b|中蒙",
+                body_l,
+                flags=re.I,
+            ):
                 self.stats["items_filtered"] += 1
                 return
 
         mongolia_markers = [
             "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
             "монгол улс", "монгол", "蒙古国", "乌兰巴托",
+            "chita", "чита", "kyakhta", "кяхта", "赤塔", "恰克图", "后贝加尔",
         ]
         has_mn = is_mongolia_country_related(body) or any(m in body_l for m in mongolia_markers)
 
-        # 明显他国稿且无蒙古标记 → 丢弃（含阿富汗/中国制毒但未提蒙古）
         foreign_hits = [
             "cyprus", "uzbekistan", "tajikistan", "vanuatu", "yunnan",
             "kazakhstan", "kyrgyz", "afghanistan", "china/afghanistan",
@@ -573,40 +664,43 @@ class SearchFeedCollector:
             self.stats["items_filtered"] += 1
             return
 
-        # require_mongolia：英/中/俄语谷歌源强制；蒙语谷歌源不强制标题含“蒙古”
         req_mn = feed.get("require_mongolia")
         if req_mn is None:
             req_mn = require_mongolia
+        # UNODC / 快照任务：放宽蒙古信号
         if req_mn and not is_mongolia_country_related(body):
+            if feed.get("snapshot_only") or "unodc" in body_l:
+                if not is_unodc_mongolia_signal(body):
+                    self.stats["items_filtered"] += 1
+                    return
+            else:
+                self.stats["items_filtered"] += 1
+                return
+
+        gate = body
+        if not force_drug and not is_drug_related(gate, loose=True):
             self.stats["items_filtered"] += 1
             return
 
-        # 涉毒：优先用标题判定，避免摘要被搜索词污染
-        gate = title if (summary == title or "关键词" in summary) else body
-        if not force_drug and not is_drug_related(gate, loose=False):
-            self.stats["items_filtered"] += 1
-            return
-        if not force_drug and not is_drug_related(title, loose=False):
-            # 标题本身必须涉毒（站内搜/RSS 常见侧栏噪声）
+        if published is not None and self._too_old(published):
             self.stats["items_filtered"] += 1
             return
 
-        # 严格近期：有发布时间则必须在窗口内
-        if self._too_old(published):
-            self.stats["items_filtered"] += 1
-            return
-
-        item_url = url or f"search://{feed['org_name']}/{content_hash(title, feed.get('query',''), summary)[:16]}"
+        item_url = url or f"search://{feed['org_name']}/{content_hash(title, feed.get('query',''), summary, org_name=feed.get('org_name',''))[:16]}"
         if item_url in self._seen_urls:
             return
         self._seen_urls.add(item_url)
 
         lang = detect_lang(title + summary) or ("mn" if feed.get("hl") == "mn" else "en")
-        # 为提速：搜索阶段默认不翻译长文，只译标题
         title_zh = translate_to_zh(title, lang, settings.enable_translation)
         summary_zh = summary if lang == "zh" else (title_zh if not summary else summary)
 
-        ch = content_hash(title, item_url, summary)
+        # 去重：hash 含机构+日期，不同媒体同案分别入库；仅同 URL 或同 hash 合并
+        ch = content_hash(
+            title, item_url, summary,
+            org_name=feed.get("org_name") or "",
+            published=published,
+        )
         existing = (
             self.db.query(IntelItem)
             .filter((IntelItem.url == item_url) | (IntelItem.content_hash == ch))
@@ -614,6 +708,9 @@ class SearchFeedCollector:
         )
         blob = f"{body}\n{feed.get('query','')}"
         level = intel_level(blob)
+        if published is None:
+            # 无发布时间：降低展示优先级（一般），仍入库
+            level = level if level == "重要" else "一般"
         category = classify_category(blob)
         alert = is_critical(blob) or level == "紧急"
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import random
 import time
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
@@ -24,12 +25,13 @@ from app.crawler.filters import (
     is_drug_related,
     is_mongolia_country_related,
     is_stale,
+    is_unodc_mongolia_signal,
     normalize_text,
     parse_date_guess,
     same_host_or_sub,
     translate_to_zh,
 )
-from app.crawler.http_client import build_httpx_client
+from app.crawler.http_client import build_httpx_client, pick_user_agent
 from app.crawler.rate_limit import can_crawl_host, mark_host_crawled
 from app.db.models import CrawlJob, IntelItem, Source
 from config.core_official import is_forbidden_url
@@ -47,8 +49,9 @@ class CrawlEngine:
     def __init__(self, db: Session, on_event: ProgressCallback = None):
         self.db = db
         self.on_event = on_event
+        # 原缺陷：固定 UA 易被反爬；现用 UA 池随机
         self.headers = {
-            "User-Agent": settings.crawl_user_agent,
+            "User-Agent": pick_user_agent(),
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Accept-Language": "mn,en;q=0.8,ru;q=0.6,zh;q=0.4",
         }
@@ -452,7 +455,10 @@ class CrawlEngine:
                     if page_html:
                         fetched_pages.add(url)
                         self.stats["pages_fetched"] += 1
-                        time.sleep(settings.crawl_request_delay_sec)
+                        time.sleep(
+                            settings.crawl_request_delay_sec
+                            + random.uniform(0, float(getattr(settings, "crawl_delay_jitter_sec", 2.0) or 0))
+                        )
                 if not page_html:
                     continue
                 self._ingest_page(src, url, page_html, extra)
@@ -487,35 +493,43 @@ class CrawlEngine:
         paragraphs = [p for p in paragraphs if len(p) > 25]
         content = normalize_text("\n".join(paragraphs[:40]))
         summary = content[:400]
-        # 入库判定只用标题+摘要，防止页脚/相关链接误放行
-        gate_blob = f"{title}\n{summary}"
-        if not is_drug_related(gate_blob, None, loose=False):
+        # 原缺陷：仅用标题+摘要且蒙通社强制标题含毒词 → 深度专题被误删
+        # 优化：标题/摘要/正文任一命中强毒词即可；取消蒙通社标题强制
+        gate_blob = f"{title}\n{summary}\n{content[:2500]}"
+        if not is_drug_related(gate_blob, extra_keywords, loose=True):
             self.stats["items_filtered"] += 1
             return
-        # UNODC 全球页必须点名蒙古，否则丢掉海地/萨赫勒等无关稿
+        # UNODC：放宽为分栏/统计信号即可，不必全文强调 Mongolia
         host = (url or "").lower()
-        if "unodc.org" in host and not is_mongolia_country_related(gate_blob):
+        if "unodc.org" in host and not is_unodc_mongolia_signal(gate_blob):
             self.stats["items_filtered"] += 1
             return
-        # 蒙通社/政府综合门户：标题本身也要能过涉毒，避免“军演/画展”靠正文噪声入库
-        if any(x in (src.org_name or "") for x in ("蒙通社", "政府主站", "政府国际合作", "移民局", "外交部")):
-            if not is_drug_related(title, None, loose=False):
-                self.stats["items_filtered"] += 1
-                return
 
         blob = f"{title}\n{summary}\n{content}"
 
         published = parse_date_guess(blob) or parse_date_guess(html[:5000])
+        # 无发布时间：is_stale 返回 False，保留入库
         if is_stale(published, max_days=settings.crawl_max_age_days):
             self.stats["items_filtered"] += 1
             return
+
+        # 短快讯：内容过短但标题涉毒仍保留（取消 250 字门槛）
+        if len(title) + len(content) < 100 and not is_drug_related(title, loose=True):
+            if len(title) < 12:
+                self.stats["items_filtered"] += 1
+                return
 
         lang = detect_lang(blob) or src.lang or "mn"
         title_zh = translate_to_zh(title, lang, settings.enable_translation)
         summary_zh = translate_to_zh(summary, lang, settings.enable_translation)
         content_zh = translate_to_zh(content[:3000], lang, settings.enable_translation)
 
-        ch = content_hash(title, url, content)
+        ch = content_hash(
+            title, url, content,
+            org_name=src.org_name or "",
+            published=published,
+        )
+        # 仅同 URL 或同 hash（含机构+日期）合并；不同媒体同案分别入库
         existing = self.db.query(IntelItem).filter(
             (IntelItem.url == url) | (IntelItem.content_hash == ch)
         ).first()
@@ -608,21 +622,25 @@ class CrawlEngine:
         )
 
     def _discover_child_sources(self, src: Source, links: List[str]) -> None:
-        if src.discover_depth >= min(settings.crawl_max_depth, 1):
+        # 递归深度完整生效（原 min(depth,1) 导致 depth=2 失效）
+        if src.discover_depth >= int(getattr(settings, "crawl_max_depth", 2) or 2):
             return
-        # 只发现明显涉毒栏目，避免 zasag/montsame 全站新闻膨胀到上百源
         column_hints = [
-            "narcotic", "anti-drug", "antidrug", "drug-control",
-            "мансууруулах", "хар-тамхи", "anti-narcotics",
+            "narcotic", "anti-drug", "antidrug", "drug-control", "drug",
+            "мансууруулах", "хар-тамхи", "хар тамхи", "anti-narcotics",
+            "мансууруулах-хэсэг", "мансууруулах хэсэг", "хар тамхи мэдээ",
+            "баривчилгаа", "гааль", "фентанил", "метамфетамин",
+            "缉毒", "禁毒", "毒品", "seizure", "trafficking",
         ]
         added = 0
         for url in links:
-            if added >= 3:
+            if added >= 30:  # 子栏目上限 30
                 break
             if is_forbidden_url(url):
                 continue
             low = url.lower()
-            if not any(h in low for h in column_hints):
+            # 路径或锚文本关键词（links 仅为 URL，用路径匹配）
+            if not any(h.replace(" ", "-") in low or h.replace(" ", "") in low or h in low for h in column_hints):
                 continue
             if not is_allowed_url(url):
                 continue
@@ -659,6 +677,8 @@ class CrawlEngine:
         if not is_allowed_url(url) or is_forbidden_url(url):
             return None
         try:
+            # 每次请求轮换 UA，降低反爬拦截
+            client.headers["User-Agent"] = pick_user_agent()
             resp = client.get(url)
             if resp.status_code >= 400:
                 logger.warning("HTTP %s %s", resp.status_code, url)

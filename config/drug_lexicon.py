@@ -121,6 +121,10 @@ RU_KEYWORDS = [
     "нитазен", "изотонитазен", "трамадол", "оксикодон", "псилоцибин",
     "синтетический каннабиноид", "катинон", "МДПВ", "бензодиазепин",
     "синтетический", "психоактивн", "реабилитация",
+    # 口岸/跨境长尾 + 俄蒙交界
+    "Замын-Ууд", "Гашуунсухайт", "Эрлянь", "китайско-монгольск",
+    "таможенн", "наркоконтрабанда", "наркоторговля",
+    "Чита", "Кяхта", "Забайкальск", "Забайкалье", "Маньчжурия",
 ]
 
 # 合并：过滤用总词库（去重）
@@ -155,6 +159,19 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
     when_suffix = f" when:{when}" if when else ""
 
     # —— 蒙语核心 ——
+    mn_cores_news = [
+        "мансууруулах бодис",
+        "хар тамхи",
+        "метамфетамин",
+        "фентанил",
+        "нитазен",
+        "каннабис",
+        "героин",
+        "баривчилгаа мансууруулах",
+        "гааль мансууруулах",
+        "Замын-Үүд мансууруулах",
+        "хил мансууруулах",
+    ]
     mn_cores_full = [
         "мансууруулах бодис",
         "хар тамхи",
@@ -176,17 +193,9 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "баривчилгаа мансууруулах",
         "гааль мансууруулах",
         "цагдаа хар тамхи",
-    ]
-    mn_cores_news = [
-        "мансууруулах бодис",
-        "хар тамхи",
-        "метамфетамин",
-        "фентанил",
-        "нитазен",
-        "каннабис",
-        "героин",
-        "баривчилгаа мансууруулах",
-        "гааль мансууруулах",
+        "Замын-Үүд мансууруулах",
+        "Гашуунсухайт мансууруулах",
+        "хил нэвтрүүлэх мансууруулах",
     ]
     for q in (mn_cores_news if news_mode else mn_cores_full):
         tasks.append({
@@ -203,6 +212,16 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         })
 
     # —— 英语：蒙古 + 明确毒品品名 ——
+    en_news = [
+        "narcotic OR \"illegal drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
+        "methamphetamine OR \"crystal meth\"",
+        "fentanyl OR nitazene OR isotonitazene",
+        "cannabis OR marijuana OR \"synthetic cannabinoid\"",
+        "heroin OR ketamine OR MDMA",
+        "\"drug seizure\" OR \"drug bust\" OR \"drugs seized\"",
+        "\"Zamyn-Uud\" OR \"Gashuun Sukhait\" OR Erenhot (drug OR narcotic OR seizure)",
+        "\"China-Mongolia\" OR \"Sino-Mongolian\" (border OR customs) (drug OR narcotic)",
+    ]
     en_full = [
         "narcotic OR \"illegal drug\" OR \"illicit drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
         "methamphetamine OR \"crystal meth\" OR \"ice meth\"",
@@ -220,14 +239,8 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "\"designer drug\" OR NPS OR \"liquid NPS\" OR \"party drug\"",
         "precursor OR ephedrine OR pseudoephedrine",
         "\"drug seizure\" OR \"drugs seized\" OR \"drug bust\"",
-    ]
-    en_news = [
-        "narcotic OR \"illegal drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
-        "methamphetamine OR \"crystal meth\"",
-        "fentanyl OR nitazene OR isotonitazene",
-        "cannabis OR marijuana OR \"synthetic cannabinoid\"",
-        "heroin OR ketamine OR MDMA",
-        "\"drug seizure\" OR \"drug bust\" OR \"drugs seized\"",
+        "\"Zamyn-Uud\" OR Gashuun OR Erenhot (narcotic OR meth OR fentanyl OR seizure)",
+        "\"China Mongolia border\" OR \"Sino-Mongolian\" (drug OR trafficking OR customs)",
     ]
     for g in (en_news if news_mode else en_full):
         tasks.append({
@@ -244,6 +257,16 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         })
 
     # —— 中文：蒙古国 + 毒品 ——
+    zh_news = [
+        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
+        "冰毒 OR 芬太尼 OR 尼秦 OR 海洛因 OR 大麻",
+        "合成大麻素 OR 安纳咖 OR 氯胺酮",
+        "口岸查获 OR 跨境贩毒 OR 走私毒品",
+        # 地域+毒品组合（扩大检索基数）
+        "扎门乌德 OR 甘其毛都 OR 二连浩特 (毒品 OR 缉毒 OR 查获)",
+        "中蒙口岸 OR 中蒙边境 (贩毒 OR 走私 OR 缉毒)",
+        "蒙古国 (易制毒 OR 麻精 OR 新型毒品 OR 安纳咖)",
+    ]
     zh_full = [
         "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
         "冰毒 OR 冰块 OR 海洛因 OR 大麻 OR 黑烟草 OR 可卡因",
@@ -257,12 +280,11 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "氯胺酮 OR 摇头丸 OR 新型毒品",
         "易制毒 OR 麻精 OR 制毒",
         "口岸查获 OR 跨境贩毒 OR 走私毒品",
-    ]
-    zh_news = [
-        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
-        "冰毒 OR 芬太尼 OR 尼秦 OR 海洛因 OR 大麻",
-        "合成大麻素 OR 安纳咖 OR 氯胺酮",
-        "口岸查获 OR 跨境贩毒 OR 走私毒品",
+        "扎门乌德 (毒品 OR 缉毒 OR 查获 OR 走私)",
+        "甘其毛都 (毒品 OR 缉毒 OR 查获 OR 走私)",
+        "二连浩特 (毒品 OR 缉毒 OR 查获)",
+        "中蒙口岸 OR 中蒙边境 (缉毒 OR 贩毒 OR 安纳咖 OR 芬太尼)",
+        "蒙古国 (尼秦 OR 异托尼他秦 OR 合成大麻素 OR 安纳咖)",
     ]
     for g in (zh_news if news_mode else zh_full):
         tasks.append({

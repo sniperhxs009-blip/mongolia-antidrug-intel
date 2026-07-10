@@ -274,15 +274,15 @@ class AnalysisEngine:
             sid = it.system_id or 0
             if sid in (1, 2, 3, 4, 5, 6, 7):
                 return sid
-            if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border"]):
+            if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border", "扎门", "甘其毛都", "跨境"]):
                 return 4
-            if self._match(it, ["戒毒", "康复", "成瘾", "донтсон", "сэргээх", "rehab"]):
+            if self._match(it, ["戒毒", "康复", "成瘾", "донтсон", "сэргээх", "rehab", "青少年"]):
                 return 6
-            if self._match(it, ["UNODC", "国际", "外交", "олон улсын", "INTERPOL", "INCB"]):
+            if self._match(it, ["UNODC", "国际", "外交", "олон улсын", "INTERPOL", "INCB", "reddit", "论坛"]):
                 return 7
-            if self._match(it, ["麻精", "处方", "卫生", "прекурсор", "health", "moh"]):
+            if self._match(it, ["麻精", "处方", "卫生", "прекурсор", "health", "moh", "易制毒"]):
                 return 3
-            if self._match(it, ["警察", "检察院", "缉毒", "цагдаа", "баривчилгаа", "prosecutor"]):
+            if self._match(it, ["警察", "检察院", "缉毒", "цагдаа", "баривчилгаа", "prosecutor", "统计", "同比"]):
                 return 2
             if self._match(it, ["委员会", "政府", "zasag", "gov.mn", "协调"]):
                 return 1
@@ -314,7 +314,7 @@ class AnalysisEngine:
                 lines.append("- 本周期该模块公开渠道未见新增可结构化涉毒官方情报。")
                 lines.append("")
                 continue
-            for idx, g in enumerate(group[:12], 1):
+            for idx, g in enumerate(group[:80], 1):  # 原 25 → 80，报告不截断隐藏
                 title = self._item_title_zh(g)
                 org = self._org_zh(g.org_name)
                 pub = g.published_at or g.crawled_at
@@ -331,12 +331,37 @@ class AnalysisEngine:
         if uncategorized:
             lines.append("## 附、其他公开渠道涉蒙涉毒信息（已过滤）")
             lines.append("")
-            for g in uncategorized[:8]:
-                lines.append(
-                    f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
-                    f"{self._org_zh(g.org_name)}｜{g.url}"
-                )
-            lines.append("")
+            # 分模块展示：论坛 / 统计 / 其他，避免大量条目挤压
+            forum_items = [g for g in uncategorized if (g.system_id or 0) == 11 or self._match(g, ["reddit", "论坛", "zhihu", "贴吧"])]
+            stat_items = [g for g in uncategorized if (g.system_id or 0) == 9 or (g.category or "") in ("官方统计", "PDF报表")]
+            other = [g for g in uncategorized if g not in forum_items and g not in stat_items]
+            if stat_items:
+                lines.append("### 统计与年报类")
+                lines.append("")
+                for g in stat_items[:80]:
+                    lines.append(
+                        f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                        f"{self._org_zh(g.org_name)}｜{g.url}"
+                    )
+                lines.append("")
+            if forum_items:
+                lines.append("### 论坛与社区类")
+                lines.append("")
+                for g in forum_items[:80]:
+                    lines.append(
+                        f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                        f"{self._org_zh(g.org_name)}｜{g.url}"
+                    )
+                lines.append("")
+            if other:
+                lines.append("### 媒体与其他公开渠道")
+                lines.append("")
+                for g in other[:80]:
+                    lines.append(
+                        f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                        f"{self._org_zh(g.org_name)}｜{g.url}"
+                    )
+                lines.append("")
 
         # 综合交叉研判（文档第八节）
         lines.append("## 八、综合情报交叉研判总结")
@@ -391,12 +416,16 @@ class AnalysisEngine:
             return "recent15" if ts >= mid else "prior15"
 
         dims = {
-            "品类_合成/芬太尼/尼秦": ["芬太尼", "尼秦", "合成", "fentanyl", "nitazene", "synthetic", "NPS"],
-            "品类_传统大麻/海洛因/冰毒": ["大麻", "海洛因", "冰毒", "cannabis", "heroin", "meth"],
-            "渠道_口岸/跨境": ["口岸", "边境", "跨境", "customs", "border", "хил", "гааль"],
+            "品类_合成/芬太尼/尼秦": ["芬太尼", "尼秦", "合成", "fentanyl", "nitazene", "synthetic", "NPS", "异托尼他秦"],
+            "品类_传统大麻/海洛因/冰毒": ["大麻", "海洛因", "冰毒", "cannabis", "heroin", "meth", "安纳咖"],
+            "品类_新型毒品/NPS": ["新型毒品", "快乐水", "合成大麻素", "nps", "designer", "香料毒"],
+            "渠道_口岸/跨境": ["口岸", "边境", "跨境", "customs", "border", "хил", "гааль", "扎门乌德", "甘其毛都"],
+            "渠道_跨境走私": ["走私", "trafficking", "smuggl", "контрабанда", "хил нэвтрүүлэх"],
             "渠道_城市黑市": ["黑市", "青少年", "校园", "音乐节", "playtime", "ub post"],
-            "人群_青少年": ["青少年", "校园", "学生", "youth", "school"],
+            "人群_青少年": ["青少年", "校园", "学生", "youth", "school", "13-25"],
             "人群_跨境走私": ["走私", "trafficking", "smuggl", "баривчилгаа"],
+            "来源_论坛社区": ["reddit", "论坛", "zhihu", "贴吧", "bluelight"],
+            "来源_官方统计": ["统计", "同比", "pdf", "статистик", "案件数"],
         }
         out: Dict[str, dict] = {}
         for name, keys in dims.items():

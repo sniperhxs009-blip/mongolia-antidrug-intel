@@ -298,7 +298,7 @@ def build_global_search_queries(mode: str = "full", when: str = "") -> List[dict
         ("Bloomberg", "site:bloomberg.com"),
         ("Eurasianet", "site:eurasianet.org"),
     ]
-    for name, site in (media_sites_news if news_mode else media_sites_full):
+    for name, site in media_sites_full:  # 【增产】取消 news 切片，完整加载全部媒体
         tasks.append({
             "system_id": SYSTEM_ID,
             "system_name": SYSTEM_NAME,
@@ -364,16 +364,76 @@ def build_global_search_queries(mode: str = "full", when: str = "") -> List[dict
         "Улан-Батор (наркотик OR метамфетамин OR фентанил)",
         "Монголия (наркоторговля OR наркоконтрабанда OR \"наркотических средств\")",
     ]
-    if not news_mode:
-        for q in ru_intl:
+    # 俄语国际：news/full 均加载（取消切片）
+    for q in ru_intl:
+        tasks.append({
+            "system_id": SYSTEM_ID,
+            "system_name": SYSTEM_NAME,
+            "org_name": f"国际俄语·{q[:16]}",
+            "query": f"{q}{when_suffix}",
+            "hl": "ru",
+            "gl": "ru",
+            "ceid": "RU:ru",
+            "engine": "google_news",
+            "require_mongolia": True,
+            "tier": "full",
+        })
+
+    # —— 中蒙边境专项 ——
+    border_qs = [
+        "\"Zamyn-Uud\" OR \"Zamiin-Uud\" (drug OR narcotic OR meth OR fentanyl OR seizure)",
+        "\"Gashuun Sukhait\" OR \"Gashuunsukhait\" (drug OR narcotic OR smuggling)",
+        "Erenhot OR \"Erlian\" (Mongolia OR Mongolian) (drug OR narcotic OR 缉毒)",
+        "\"China-Mongolia border\" OR \"Sino-Mongolian\" (drug trafficking OR narcotic OR customs)",
+        "\"中蒙口岸\" OR \"中蒙边境\" OR 扎门乌德 OR 甘其毛都 (毒品 OR 缉毒 OR 查获 OR 走私)",
+        "site:reuters.com OR site:news.cn OR site:cgtn.com Mongolia (border OR customs) (drug OR narcotic)",
+        "site:tass.com OR site:ria.ru Монголия (наркотик OR контрабанда OR фентанил)",
+        "site:akipress.com Mongolia (drug OR narcotic OR methamphetamine)",
+    ]
+    for q in border_qs:
+        tasks.append({
+            "system_id": SYSTEM_ID,
+            "system_name": SYSTEM_NAME,
+            "org_name": f"中蒙边境·{q.split('(')[0].strip()[:18]}",
+            "query": f"{q}{when_suffix}",
+            "hl": "zh-CN" if "中蒙" in q or "扎门" in q else "en",
+            "gl": "cn" if "中蒙" in q or "扎门" in q else "us",
+            "ceid": "CN:zh-Hans" if "中蒙" in q or "扎门" in q else "US:en",
+            "engine": "google_news",
+            "require_mongolia": True,
+            "tier": "news" if news_mode else "full",
+        })
+
+    # —— 俄蒙边境缉毒专项 + 周/月历史分支 ——
+    border_ru = [
+        "Чита OR Кяхта OR Забайкальск (Монголия) (наркотик OR контрабанда OR фентанил)",
+        "Chita OR Kyakhta OR Zabaikalsk Mongolia (drug OR narcotic OR smuggling)",
+        "Монголия Россия (граница OR таможня) (наркотик OR изъятие)",
+    ]
+    for q in border_ru:
+        tasks.append({
+            "system_id": SYSTEM_ID,
+            "system_name": SYSTEM_NAME,
+            "org_name": f"俄蒙边境·{q[:20]}",
+            "query": f"{q}{when_suffix}",
+            "hl": "ru",
+            "gl": "ru",
+            "ceid": "RU:ru",
+            "engine": "google_news",
+            "require_mongolia": True,
+            "tier": "full",
+        })
+    # 历史窗口分支（周/月），扩大覆盖
+    for hist_when, label in (("7d", "近周"), ("30d", "近月")):
+        if when and when != hist_when:
             tasks.append({
                 "system_id": SYSTEM_ID,
                 "system_name": SYSTEM_NAME,
-                "org_name": f"国际俄语·{q[:16]}",
-                "query": f"{q}{when_suffix}",
-                "hl": "ru",
-                "gl": "ru",
-                "ceid": "RU:ru",
+                "org_name": f"历史窗·{label}·Reuters",
+                "query": f"site:reuters.com Mongolia (drug OR narcotic OR methamphetamine) when:{hist_when}",
+                "hl": "en",
+                "gl": "us",
+                "ceid": "US:en",
                 "engine": "google_news",
                 "require_mongolia": True,
                 "tier": "full",

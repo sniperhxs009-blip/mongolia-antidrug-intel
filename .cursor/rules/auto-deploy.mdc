@@ -1,0 +1,16 @@
+---
+description: After code changes for this project, automatically commit, push, and deploy to Render without waiting for the user to ask.
+alwaysApply: true
+---
+
+# Auto commit / push / deploy
+
+When finishing functional changes to **mongolia-antidrug-intel**:
+
+1. Run unit tests if crawl/filter/config logic changed (`tests/test_core.py`).
+2. **Commit** relevant files (never `.env` or secrets) with a clear message.
+3. **Push** to `origin` (`git push -u origin HEAD` if needed).
+4. Confirm Render redeploy (GitHub auto-deploy or trigger via API if available).
+5. Tell the user the commit, push result, and live URL: https://mongolia-antidrug-intel.onrender.com
+
+Do **not** wait for the user to say “推送” or “部署” unless they explicitly ask to keep changes local only.

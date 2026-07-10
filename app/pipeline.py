@@ -29,7 +29,7 @@ def run_intel_cycle(
     on_event: ProgressCallback = None,
     mode: str = "full",
 ) -> Dict[str, Any]:
-    """mode=news：只抓最新新闻（适合高频监测）；mode=full：新闻+研判+邮件。"""
+    """mode=news：高频监测（仍含论坛+PDF）；mode=full：全量检索+研判+邮件。"""
     news_only = mode == "news"
 
     def emit(event_type: str, **payload: Any) -> None:
@@ -54,7 +54,7 @@ def run_intel_cycle(
         "phase",
         status="running",
         phase="启动",
-        message="新闻监测已启动" if news_only else "情报流水线已启动",
+        message="新闻监测已启动（含论坛/统计）" if news_only else "情报流水线已启动",
     )
 
     if not skip_crawl:
@@ -79,15 +79,16 @@ def run_intel_cycle(
                 status="running",
                 phase="最新新闻监测" if news_only else "关键词全量搜索",
                 message=(
-                    f"正在抓取蒙古国涉毒最新新闻（when:{getattr(settings,'news_when','30d')}）…"
+                    f"正在抓取涉毒新闻+论坛+快照（when:{getattr(settings,'news_when','1y')}）…"
                     if news_only
-                    else f"正在用全量词库+核心官网 site 搜索（when:{getattr(settings,'full_when','30d')}）…"
+                    else f"正在全量词库+核心官网+论坛检索（when:{getattr(settings,'full_when','1y')}）…"
                 ),
             )
             searcher = SearchFeedCollector(db, on_event=on_event)
+            # news/full 均走完整检索通道（论坛 when 强制 1y；不再剔除 site:gov.mn 快照）
             result["search"] = searcher.run(mode="news" if news_only else "full")
 
-        # 官方统计 / PDF（新闻快扫也跑精简版，保证统计持续更新）
+        # news/full 均执行官方统计；full 额外含 PDF 发现
         if settings.enable_official_stats:
             emit(
                 "phase",
@@ -98,14 +99,14 @@ def run_intel_cycle(
             stats_collector = OfficialStatsCollector(db, on_event=on_event)
             result["official_stats"] = stats_collector.run(mode="news" if news_only else "full")
 
-        # 混合模式：关键词检索为主后，仅对清单站点做浅扫防漏（每站1入口、少页）
+        # 仅官网浅扫轻量化；页数上限放宽到 30 以配合 depth=2
         if settings.enable_official_crawl:
             old_max = settings.crawl_max_pages_per_source
             try:
                 shallow = int(getattr(settings, "crawl_max_pages_core", 4) or 4)
                 if shallow <= 0:
                     shallow = 4
-                shallow = min(old_max if old_max > 0 else 4, max(2, min(shallow, 6)))
+                shallow = min(old_max if old_max > 0 else 30, max(4, min(max(shallow, 8), 30)))
                 emit(
                     "phase",
                     status="running",
@@ -137,7 +138,11 @@ def run_intel_cycle(
         else:
             result["crawl"] = {"status": "skipped"}
 
-    new_count = (result.get("search") or {}).get("items_new", 0) + (result.get("crawl") or {}).get("items_new", 0)
+    new_count = (
+        (result.get("search") or {}).get("items_new", 0)
+        + (result.get("crawl") or {}).get("items_new", 0)
+        + (result.get("official_stats") or {}).get("items_new", 0)
+    )
     upd_count = (result.get("search") or {}).get("items_updated", 0) + (result.get("crawl") or {}).get("items_updated", 0)
 
     # 新闻快扫：不生成报告、不发日简报；仅对新告警发邮件

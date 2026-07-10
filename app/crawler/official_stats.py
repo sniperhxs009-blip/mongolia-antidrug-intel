@@ -63,7 +63,7 @@ def _extract_pdf_text(data: bytes) -> str:
 
         reader = PdfReader(io.BytesIO(data))
         parts = []
-        for page in reader.pages[:40]:
+        for page in reader.pages[:80]:  # 原 40 页 → 80 页，覆盖长年报
             try:
                 parts.append(page.extract_text() or "")
             except Exception:
@@ -213,18 +213,17 @@ class OfficialStatsCollector:
                 except Exception:
                     published = None
             body = f"{title}\n{summary}"
-            if not is_drug_related(body, loose=False):
+            if not is_drug_related(body, loose=True):
                 self.stats["items_filtered"] += 1
                 continue
-            # 官方统计新闻也必须与蒙古国相关（排除 UNODC 阿富汗/中国全球稿）
-            from app.crawler.filters import is_mongolia_country_related
+            from app.crawler.filters import is_mongolia_country_related, is_unodc_mongolia_signal
 
-            if not is_mongolia_country_related(body):
+            if not is_mongolia_country_related(body) and not is_unodc_mongolia_signal(body):
                 self.stats["items_filtered"] += 1
                 continue
-            # 统计类优先：含数字或统计词
+            # 无发布时间不丢弃；统计类优先含数字，但口岸快讯无数字也放行
             if not re.search(
-                r"\d|статистик|хувь|өс|бүртгэгд|хэрэг|seizure|percent|%|案件|同比|查获",
+                r"\d|статистик|хувь|өс|бүртгэгд|хэрэг|seizure|percent|%|案件|同比|查获|мансууруулах|narcotic|毒品",
                 body,
                 flags=re.I,
             ):
@@ -235,7 +234,7 @@ class OfficialStatsCollector:
                 title=title,
                 summary=summary,
                 url=link,
-                published=published,
+                published=published,  # None 也可入库
                 category="官方统计",
             )
             if item:
@@ -274,10 +273,18 @@ class OfficialStatsCollector:
                 cand = m.group(1)
             if not cand.startswith("http"):
                 continue
+            # 硬性：禁止下载蒙古 .gov.mn PDF（即使搜索结果出现）
+            from config.core_official import is_forbidden_url
+            if is_forbidden_url(cand) or ".gov.mn" in cand.lower():
+                continue
             if not _host_allowed(cand) and "unodc.org" not in cand and "ocindex.net" not in cand:
-                # 放宽：query 已限定 site，仍允许常见官方域
                 host = urlparse(cand).netloc.lower()
-                if not any(x in host for x in (".mn", "unodc.org", "ocindex.net", "gov.")):
+                # 原缺陷：含 "gov." 即放行 → 可能直连 gov.mn；现明确排除
+                if host.endswith(".gov.mn") or host == "gov.mn":
+                    continue
+                if not any(x in host for x in (".mn", "unodc.org", "ocindex.net", "incb.org")):
+                    continue
+                if host.endswith(".gov.mn"):
                     continue
             if cand not in pdf_urls:
                 pdf_urls.append(cand)
@@ -308,13 +315,19 @@ class OfficialStatsCollector:
             with open(path, "wb") as f:
                 f.write(data)
             text = _extract_pdf_text(data)
-            if not text or len(text) < 40:
-                return
-            # 必须涉毒
-            if not is_drug_related(text[:8000], loose=False):
-                # PDF 可能很长，再扫全文关键词
+            if not text or len(text) < 20:
+                # 短 PDF：若含毒品统计关键词仍保留
+                if not text or not re.search(
+                    r"мансууруулах|narcotic|drug|毒品|涉毒|seizure",
+                    text or "",
+                    flags=re.I,
+                ):
+                    return
+            # 入库判定复用宽松规则；扫描前 20000 字符
+            sample = text[:20000]
+            if not is_drug_related(sample, loose=True):
                 if not re.search(
-                    r"мансууруулах|хар\s*тамхи|narcotic|methamphetamine|fentanyl|毒品|涉毒",
+                    r"мансууруулах|хар\s*тамхи|narcotic|methamphetamine|fentanyl|毒品|涉毒|seizure",
                     text,
                     flags=re.I,
                 ):

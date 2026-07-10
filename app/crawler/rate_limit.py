@@ -1,4 +1,9 @@
-"""单站日抓取频次限制（默认每日 ≤3 次）。"""
+"""单站日抓取频次限制。
+
+原缺陷：全球统一低限额，蒙古本土媒体很快触顶导致漏采。
+优化：对 montsame/gogo/ikon/news.mn/ubpost 等本土媒体放宽日限额；
+国际小众高危站维持默认限制。
+"""
 from __future__ import annotations
 
 import json
@@ -17,12 +22,35 @@ settings = get_settings()
 
 KEY = "host_crawl_quota"
 
+# 蒙古本土媒体：放宽日限额（相对默认值放大）
+MN_MEDIA_HOST_SUFFIXES = (
+    "montsame.mn",
+    "gogo.mn",
+    "ikon.mn",
+    "news.mn",
+    "mongolnews.mn",
+    "ubpost.mn",
+)
+
 
 def _host(url: str) -> str:
     try:
         return urlparse(url).netloc.lower().split(":")[0]
     except Exception:
         return ""
+
+
+def _is_mn_media(host: str) -> bool:
+    h = (host or "").replace("www.", "")
+    return any(h == s or h.endswith("." + s) for s in MN_MEDIA_HOST_SUFFIXES)
+
+
+def _limit_for_host(host: str) -> int:
+    base = int(getattr(settings, "crawl_max_per_host_per_day", 10) or 10)
+    if _is_mn_media(host):
+        # 【增产】本土媒体单日上限固定 50，避免 10×2=20 触顶断采
+        return 50
+    return base
 
 
 def _load(db: Session) -> Dict[str, dict]:
@@ -49,7 +77,7 @@ def can_crawl_host(db: Session, url_or_host: str) -> bool:
     host = _host(url_or_host) if "://" in (url_or_host or "") else (url_or_host or "").lower()
     if not host:
         return True
-    limit = int(getattr(settings, "crawl_max_per_host_per_day", 3) or 3)
+    limit = _limit_for_host(host)
     data = _load(db)
     today = date.today().isoformat()
     rec = data.get(host) or {}
@@ -71,4 +99,9 @@ def mark_host_crawled(db: Session, url_or_host: str) -> None:
     rec["last"] = datetime.utcnow().isoformat()
     data[host] = rec
     _save(db, data)
-    logger.debug("host quota %s -> %s/%s", host, rec["count"], getattr(settings, "crawl_max_per_host_per_day", 3))
+    logger.debug(
+        "host quota %s -> %s/%s",
+        host,
+        rec["count"],
+        _limit_for_host(host),
+    )

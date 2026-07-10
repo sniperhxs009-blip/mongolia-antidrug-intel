@@ -53,7 +53,7 @@ def purge_irrelevant_items(db: Session) -> Dict[str, int]:
             db.delete(it)
             deleted += 1
             continue
-        drug_ok = is_drug_related(blob, loose=False)
+        drug_ok = is_drug_related(blob, loose=True)
         mn_ok = is_mongolia_country_related(blob) or is_from_mn_media(it)
         if is_from_mn_media(it) and not drug_ok:
             db.delete(it)
