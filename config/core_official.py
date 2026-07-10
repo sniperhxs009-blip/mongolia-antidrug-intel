@@ -41,12 +41,12 @@ FORBIDDEN_HOSTS = {
     "health.gov.mn",
     "www.health.gov.mn",
 }
+# 仅屏蔽虚构专栏路径；勿用裸 /narcotics（会误伤合法文章 URL）
 FORBIDDEN_PATH_FRAGMENTS = (
     "/anti-narcotics",
     "/drug-control",
     "/antidrug",
     "/anti_drug",
-    "/narcotics",
     "shturl.cc",
     "unodc.org/mongolia",
     "unodc.org/unodc/mongolia",

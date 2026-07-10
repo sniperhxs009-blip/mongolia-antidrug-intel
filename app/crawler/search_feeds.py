@@ -89,33 +89,52 @@ class SearchFeedCollector:
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json,*/*;q=0.8",
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
-        if mode == "news":
-            when = getattr(settings, "news_when", "30d") or "30d"
-            feeds = build_search_queries(mode="news", when=when)
-            phase = "最新新闻监测"
-            msg = f"启动新闻监测（近{when}），共 {len(feeds)} 路任务"
-        else:
-            when = getattr(settings, "full_when", "30d") or "30d"
-            feeds = build_search_queries(mode="full", when=when)
-            phase = "关键词全量搜索"
-            msg = f"启动全量搜索（近{when}，含论坛/多引擎），共 {len(feeds)} 路任务"
-        # 文档核心官网 site: 搜索（补 Google 泛搜盲区）
-        try:
-            from config.core_official import build_core_site_search_queries
+        when = (
+            (getattr(settings, "news_when", "30d") if mode == "news" else getattr(settings, "full_when", "30d"))
+            or "30d"
+        )
+        # 全量修复版：以合法种子关键词检索为主，不做全站递归/论坛泛爬
+        from config.core_official import build_core_site_search_queries
 
-            core_feeds = build_core_site_search_queries(when=when)
+        core_feeds = build_core_site_search_queries(when=when)
+        repair_mode = bool(getattr(settings, "crawl_forbid_proxy", True)) and (
+            not bool(getattr(settings, "enable_official_crawl", False))
+        )
+        if repair_mode:
+            # 仅核心 site:/站内检索 + 精简中文新闻检索（结果再经白名单过滤）
+            zh_news = [
+                f
+                for f in build_search_queries(mode="news", when=when)
+                if f.get("engine") == "google_news"
+                and (f.get("hl") or "").startswith("zh")
+                and "蒙古" in (f.get("query") or "")
+            ]
+            feeds = list(core_feeds) + zh_news[:6]
+            phase = "关键词检索式增量采集"
+            msg = f"启动全量修复版检索（近{when}），核心 {len(core_feeds)} + 中文补盲 {min(6, len(zh_news))} 路"
+        else:
+            feeds = build_search_queries(mode=mode, when=when)
             feeds = list(feeds) + list(core_feeds)
-            msg = f"{msg}；另含核心官网 site 搜索 {len(core_feeds)} 路"
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("core official search feeds skipped: %s", exc)
+            phase = "最新新闻监测" if mode == "news" else "关键词全量搜索"
+            msg = f"启动搜索（近{when}），共 {len(feeds)} 路（含核心 site {len(core_feeds)}）"
         # 论坛开关
         if not getattr(settings, "enable_forum_search", True):
             feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
-        # 黑名单 URL 任务直接剔除
+        # 黑名单 URL 任务直接剔除（含 site:*.gov.mn 查询）
         try:
             from config.core_official import is_forbidden_url
 
-            feeds = [f for f in feeds if not is_forbidden_url(f.get("search_url") or f.get("query") or "")]
+            def _feed_ok(f: dict) -> bool:
+                blob = " ".join(
+                    str(f.get(k) or "") for k in ("search_url", "query", "org_name")
+                ).lower()
+                if "site:" in blob and ".gov.mn" in blob:
+                    return False
+                if is_forbidden_url(f.get("search_url") or ""):
+                    return False
+                return True
+
+            feeds = [f for f in feeds if _feed_ok(f)]
         except Exception:
             pass
 

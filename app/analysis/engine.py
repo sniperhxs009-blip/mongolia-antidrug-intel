@@ -251,9 +251,9 @@ class AnalysisEngine:
         lines.append("## 情报说明")
         lines.append("")
         lines.append(
-            "1. **数据源严格限定**：七大蒙古国官方禁毒机构官网、蒙通社 Montsame、"
-            "蒙古国官方新闻门户、UNODC 驻蒙/东亚太公开页面、中蒙边境禁毒协作相关官方通报；"
-            "并辅以核心官网 `site:` 搜索补盲。"
+            "1. **数据源严格限定**：蒙通社 Montsame、中国禁毒网、UNODC 全球官网、"
+            "联合国蒙古办事处、中新网、内蒙古公安、CSTO、上合经合、UB Post 等国内裸网可直连公开源；"
+            "禁止访问蒙古本土 `.gov.mn` 及虚构专栏路径；采用关键词检索式增量采集。"
         )
         lines.append(
             "2. **时效与过滤**：优先近30日官方发布；剔除自媒体爆料、体育兴奋剂、"
@@ -366,16 +366,65 @@ class AnalysisEngine:
 
         lines.append("## 九、下期重点监测方向")
         lines.append("")
-        lines.append("1. 蒙通社、警察总局、海关总局近30日缉毒通报与专项行动战果。")
-        lines.append("2. 卫生/麻精监管、野生原植物铲除与毒品实验室鉴定月报。")
-        lines.append("3. 中蒙口岸查验频次、无人区拦截与双边联络办线索互换。")
-        lines.append("4. UNODC 蒙古项目进展与《世界毒品报告》涉蒙章节更新。")
+        lines.append("1. 蒙通社三语站、中国禁毒网、UNODC 世界毒品报告近30日涉蒙公开通报。")
+        lines.append("2. 中新网/内蒙古公安涉中蒙口岸缉毒社会与属地官方报道。")
+        lines.append("3. CSTO、上合经合、联合国蒙古办事处涉外禁毒协作动态。")
+        lines.append("4. 近30日毒品品类、走私渠道、涉案人群趋势对比（见下节）。")
         lines.append("5. 大宗缉毒案、新法列管、跨境联合行动、高致死新型毒品预警 → 触发即时邮件。")
+        lines.append("")
+        lines.append(self._trend_30d_section(items))
         lines.append("")
         lines.append("---")
         lines.append(
             "*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成；"
             "仅基于官方及授权公开渠道，不采信自媒体爆料。*"
+        )
+        return "\n".join(lines)
+
+    def trend_compare_30d(self, items: Optional[List[IntelItem]] = None) -> dict:
+        """近30日毒品品类、走私渠道、涉案人群简易趋势对比。"""
+        items = items if items is not None else self.collect_items(days=30)
+        mid = datetime.utcnow() - timedelta(days=15)
+
+        def _bucket_period(it: IntelItem) -> str:
+            ts = it.published_at or it.crawled_at or datetime.utcnow()
+            return "recent15" if ts >= mid else "prior15"
+
+        dims = {
+            "品类_合成/芬太尼/尼秦": ["芬太尼", "尼秦", "合成", "fentanyl", "nitazene", "synthetic", "NPS"],
+            "品类_传统大麻/海洛因/冰毒": ["大麻", "海洛因", "冰毒", "cannabis", "heroin", "meth"],
+            "渠道_口岸/跨境": ["口岸", "边境", "跨境", "customs", "border", "хил", "гааль"],
+            "渠道_城市黑市": ["黑市", "青少年", "校园", "音乐节", "playtime", "ub post"],
+            "人群_青少年": ["青少年", "校园", "学生", "youth", "school"],
+            "人群_跨境走私": ["走私", "trafficking", "smuggl", "баривчилгаа"],
+        }
+        out: Dict[str, dict] = {}
+        for name, keys in dims.items():
+            a = sum(1 for it in items if _bucket_period(it) == "prior15" and self._match(it, keys))
+            b = sum(1 for it in items if _bucket_period(it) == "recent15" and self._match(it, keys))
+            delta = b - a
+            out[name] = {"prior_15d": a, "recent_15d": b, "delta": delta}
+        return {
+            "window_days": 30,
+            "total_items": len(items),
+            "dimensions": out,
+        }
+
+    def _trend_30d_section(self, items: List[IntelItem]) -> str:
+        data = self.trend_compare_30d(items)
+        lines = ["## 十、近30日趋势对比（前15日 vs 近15日）", ""]
+        if not items:
+            lines.append("- 本周期无有效情报，趋势对比暂缺。")
+            return "\n".join(lines)
+        for name, row in data["dimensions"].items():
+            arrow = "↑" if row["delta"] > 0 else ("↓" if row["delta"] < 0 else "→")
+            lines.append(
+                f"- **{name}**：前15日 {row['prior_15d']} → 近15日 {row['recent_15d']} "
+                f"（{arrow}{abs(row['delta'])}）"
+            )
+        lines.append("")
+        lines.append(
+            f"*样本总量 {data['total_items']} 条；仅反映公开渠道披露密度变化，不作绝对案发量推断。*"
         )
         return "\n".join(lines)
 

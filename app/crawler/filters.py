@@ -8,7 +8,14 @@ from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
 
-from config.sources import ALLOW_ANY_MN_DOMAIN, ALLOWED_DOMAINS, CRITICAL_KEYWORDS, DRUG_KEYWORDS
+from config.sources import (
+    ALLOW_ANY_MN_DOMAIN,
+    ALLOW_FORUM_DOMAINS,
+    ALLOW_GLOBAL_MEDIA,
+    ALLOWED_DOMAINS,
+    CRITICAL_KEYWORDS,
+    DRUG_KEYWORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +250,11 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
             return True
     if host.endswith("unodc.org") or host.endswith("news.google.com"):
         return True
+    # 全量修复版：关闭全球媒体/论坛时，不再放行国际后缀（避免绕过白名单）
+    if not ALLOW_GLOBAL_MEDIA and not ALLOW_FORUM_DOMAINS:
+        if ALLOW_ANY_MN_DOMAIN and host.endswith(".mn"):
+            return True
+        return False
     # 国际主流媒体 / 禁毒机构常见后缀放行（已在 GLOBAL_ALLOWED_DOMAINS 白名单为主）
     intl_suffixes = (
         "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk", "theguardian.com",

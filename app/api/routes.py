@@ -149,8 +149,25 @@ def self_check(db: Session = Depends(get_db)):
                     "https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html"
                 ),
             },
+            "ready_for_scheduled_crawl": all(
+                [
+                    is_forbidden_url("https://police.gov.mn/news"),
+                    is_forbidden_url("https://zasag.mn/anti-narcotics"),
+                    not is_forbidden_url("https://montsame.mn/cn"),
+                    bool(getattr(settings, "crawl_forbid_proxy", True)),
+                    not bool(settings.enable_official_crawl),
+                    len(CORE_OFFICIAL_SOURCES) >= 8,
+                ]
+            ),
         },
     }
+
+
+@router.get("/api/trend-30d")
+def trend_30d(db: Session = Depends(get_db)):
+    from app.analysis.engine import AnalysisEngine
+
+    return AnalysisEngine(db).trend_compare_30d()
 
 
 @router.get("/api/stats")
