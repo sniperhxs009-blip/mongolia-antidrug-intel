@@ -1,12 +1,40 @@
-from datetime import datetime
 """数据库ORM完整模型，无修改，原始结构保留"""
-from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
+from datetime import datetime
+from pathlib import Path
+from urllib.parse import urlparse
+
+from sqlalchemy import Column, Integer, String, DateTime, Text, Boolean, ForeignKey, create_engine
+from sqlalchemy.orm import declarative_base, sessionmaker
+
 from app.config import get_settings
+
 settings = get_settings()
-engine = create_engine(settings.database_url, connect_args={"check_same_thread": False})
+
+
+def _ensure_sqlite_dir(db_url: str) -> str:
+    """Ensure sqlite parent dir exists; fall back to ./data if /var/data is not writable."""
+    if not db_url.startswith("sqlite:///"):
+        return db_url
+    raw = db_url.replace("sqlite:///", "", 1)
+    path = Path(raw)
+    # Handle sqlite:////var/data/x.db (4 slashes -> absolute)
+    if db_url.startswith("sqlite:////"):
+        path = Path("/" + db_url.replace("sqlite:////", "", 1))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # probe write
+        probe = path.parent / ".write_probe"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink(missing_ok=True)
+        return db_url
+    except Exception:
+        fallback = Path("data") / "intel.db"
+        fallback.parent.mkdir(parents=True, exist_ok=True)
+        return f"sqlite:///{fallback.resolve().as_posix()}"
+
+
+db_url = _ensure_sqlite_dir(settings.database_url)
+engine = create_engine(db_url, connect_args={"check_same_thread": False})
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 def get_db():

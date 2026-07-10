@@ -1,28 +1,45 @@
 """定时调度，默认每小时执行"""
 from apscheduler.schedulers.background import BackgroundScheduler
+
 from app.pipeline import run_intel_cycle
 from app.db import SessionLocal
-scheduler = BackgroundScheduler(timezone="Asia/Ulaanbaatar")
+
+scheduler = BackgroundScheduler(timezone="UTC")
+
+
 def task_hourly():
     db = SessionLocal()
-    run_intel_cycle(db, report_type="daily", send_email=True, mode="news")
-    db.close()
+    try:
+        run_intel_cycle(db, report_type="daily", send_email=True, mode="news")
+    finally:
+        db.close()
+
+
 def reschedule_crawl(interval: str):
-    global scheduler
     scheduler.remove_all_jobs()
-    match interval:
-        case "every_30m":
-            scheduler.add_job(task_hourly, "interval", minutes=30)
-        case "hourly":
-            scheduler.add_job(task_hourly, "interval", hours=1)
-        case "every_6h":
-            scheduler.add_job(task_hourly, "interval", hours=6)
-        case "every_12h":
-            scheduler.add_job(task_hourly, "interval", hours=12)
-        case "daily":
-            scheduler.add_job(task_hourly, "cron", hour=8)
+    mapping = {
+        "every_30m": ("interval", {"minutes": 30}),
+        "hourly": ("interval", {"hours": 1}),
+        "every_6h": ("interval", {"hours": 6}),
+        "every_12h": ("interval", {"hours": 12}),
+        "daily": ("cron", {"hour": 8}),
+    }
+    kind, kwargs = mapping.get(interval or "hourly", ("interval", {"hours": 1}))
+    scheduler.add_job(task_hourly, kind, id="crawl_job", replace_existing=True, **kwargs)
+
+
 def start_scheduler():
     from app.config import get_settings
-    s = get_settings()
-    reschedule_crawl(s.crawl_interval)
-    scheduler.start()
+
+    try:
+        s = get_settings()
+        # Prefer configured timezone when tzdata is available
+        try:
+            scheduler.configure(timezone=s.timezone or "UTC")
+        except Exception:
+            scheduler.configure(timezone="UTC")
+        reschedule_crawl(s.crawl_interval)
+        if not scheduler.running:
+            scheduler.start()
+    except Exception as exc:  # noqa: BLE001
+        print(f"scheduler start skipped: {exc}")
