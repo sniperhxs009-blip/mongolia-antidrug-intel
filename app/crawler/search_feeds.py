@@ -465,14 +465,15 @@ class SearchFeedCollector:
             uniq.append((title, url))
 
         for title, url in uniq[:30]:
+            # 禁止把搜索词写入摘要，否则会「关键词污染」导致金融监管等误入库
             self._save_item(
                 feed=feed,
                 title=title,
-                summary=f"{title}（关键词：{feed.get('query','')}）",
+                summary=title,
                 url=url,
                 published=None,
                 require_mongolia=False,  # 蒙古媒体站，地域默认成立
-                force_drug=False,  # 仍要过涉毒校验
+                force_drug=False,
             )
 
     def _save_item(
@@ -536,8 +537,13 @@ class SearchFeedCollector:
             self.stats["items_filtered"] += 1
             return
 
-        # 涉毒：标题/摘要必须命中强词库（严格模式）
-        if not is_drug_related(body, loose=False):
+        # 涉毒：优先用标题判定，避免摘要被搜索词污染
+        gate = title if (summary == title or "关键词" in summary) else body
+        if not force_drug and not is_drug_related(gate, loose=False):
+            self.stats["items_filtered"] += 1
+            return
+        if not force_drug and not is_drug_related(title, loose=False):
+            # 标题本身必须涉毒（站内搜/RSS 常见侧栏噪声）
             self.stats["items_filtered"] += 1
             return
 

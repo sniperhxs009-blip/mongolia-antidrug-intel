@@ -79,7 +79,7 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name_mn": "mongolia.gov.mn",
         "base_url": "https://mongolia.gov.mn",
         "seed_paths": ["/", "/news"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["зохицуулах хороо"],
+        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["мансууруулах бодисын эсрэг"],
         "lang": "mn",
         "source_type": "official",
         "core_official": True,
