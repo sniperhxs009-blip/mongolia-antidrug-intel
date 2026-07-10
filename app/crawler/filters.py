@@ -34,16 +34,20 @@ STRONG_DRUG_TERMS = [
     "метамфетамин", "амфетамин", "кетамин", "фентанил", "экстази", "прекурсор",
     "донтсон", "марихуан", "гашиш", "опиум", "нитазен", "изотонитазен",
     "трамадол", "псилоцибин", "катинон",
+    "мансууруулах бодис", "тэмцэх хар тамхи", "сэргээх төв",
+    "синтетик мансууруулах бодис", "газар хил худалдаа",
     # 英语强词
     "narcotic", "narcotics", "heroin", "cocaine", "methamphetamine", "meth ",
     " cannabis", "marijuana", "hashish", "fentanyl", "ketamine", "mdma",
     "ecstasy", "opium", "opioid", "precursor", "anti-drug", "antidrug",
     "drug bust", "drug raid", "drug smugg", "drug traffick", "drug seizure",
     "seized drug", "illegal drug", "illicit drug", "controlled substance",
-    "synthetic cannabinoid", "nitazene", "isotonitazene", "metonitazene",
+    "synthetic cannabinoid", "synthetic cannabis", "cross-border trafficking",
+    "drug rehabilitation", "unodc mongolia",
+    "nitazene", "isotonitazene", "metonitazene",
     "xylazine", "bath salt", "psilocybin", "tramadol", "oxycodone",
     "hhc", "delta-8", "mdpv", "annaka", "caffeine sodium benzoate",
-    "psychotropic", "мансууруулах бодис",
+    "psychotropic",
 ]
 
 # 弱词：必须与强语境组合，不能单独入库

@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     enable_core_official_in_news: bool = True
     crawl_max_pages_official: int = 8
     crawl_max_pages_core: int = 6
+    # 境外代理：蒙古 gov 站国内 IP 常 SSL 超时。逗号分隔可轮换
+    crawl_proxy_url: str = ""
+    crawl_proxy_urls: str = ""
+    # 单站每日最多抓取次数（防封）
+    crawl_max_per_host_per_day: int = 3
+    # 请求间隔随机抖动上限（秒）
+    crawl_delay_jitter_sec: float = 0.8
 
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465

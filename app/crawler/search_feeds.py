@@ -25,6 +25,7 @@ from app.crawler.filters import (
     normalize_text,
     translate_to_zh,
 )
+from app.crawler.http_client import build_httpx_client
 from app.db.models import IntelItem
 from config.drug_lexicon import build_search_queries
 from config.sources import SEARCH_FEEDS
@@ -121,10 +122,9 @@ class SearchFeedCollector:
             current_index=0,
         )
 
-        with httpx.Client(
+        with build_httpx_client(
             headers=headers,
             timeout=httpx.Timeout(20.0, connect=8.0),
-            follow_redirects=True,
             verify=False,
         ) as client:
             for idx, feed in enumerate(feeds, start=1):

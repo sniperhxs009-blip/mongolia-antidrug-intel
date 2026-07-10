@@ -29,7 +29,10 @@ from app.crawler.filters import (
     same_host_or_sub,
     translate_to_zh,
 )
+from app.crawler.http_client import build_httpx_client
+from app.crawler.rate_limit import can_crawl_host, mark_host_crawled
 from app.db.models import CrawlJob, IntelItem, Source
+from config.core_official import is_forbidden_url
 from config.sources import SOURCES
 from config.official_stats import OFFICIAL_STAT_SOURCES
 from config.global_media import GLOBAL_COVERAGE_SOURCES
@@ -85,6 +88,8 @@ class CrawlEngine:
             for path in s.get("seed_paths") or ["/"]:
                 page_url = urljoin(s["base_url"].rstrip("/") + "/", path.lstrip("/"))
                 page_url = self._clean_url(page_url)
+                if is_forbidden_url(page_url):
+                    continue
                 key = (s["org_name"], page_url)
                 if key in seen:
                     continue
@@ -217,14 +222,22 @@ class CrawlEngine:
                 done_urls = set()
 
         fetched_pages: Set[str] = set()
-        with httpx.Client(
-            headers=self.headers,
-            timeout=settings.crawl_timeout_sec,
-            follow_redirects=True,
-            verify=settings.crawl_ssl_verify,
-        ) as client:
+        with build_httpx_client(headers=self.headers) as client:
             for idx, src in enumerate(sources, start=1):
                 checkpoint_key = f"{src.org_name}|{src.page_url}"
+                if is_forbidden_url(src.page_url or ""):
+                    self.stats["items_filtered"] += 1
+                    continue
+                if not can_crawl_host(self.db, src.page_url or src.base_url or ""):
+                    self._emit(
+                        "source_skip",
+                        current_index=idx,
+                        total_sources=total,
+                        current_org=src.org_name,
+                        current_url=src.page_url,
+                        message=f"日频次已满，跳过：{src.org_name}",
+                    )
+                    continue
                 if checkpoint_key in done_urls:
                     self._emit(
                         "source_skip",
@@ -258,6 +271,7 @@ class CrawlEngine:
                 )
                 try:
                     self._crawl_source(client, src, fetched_pages=fetched_pages)
+                    mark_host_crawled(self.db, src.page_url or src.base_url or "")
                 except Exception as exc:  # noqa: BLE001
                     self.stats["error_count"] += 1
                     src.last_status = f"error:{exc}"[:60]
@@ -292,7 +306,10 @@ class CrawlEngine:
                     items_filtered=self.stats["items_filtered"],
                     error_count=self.stats["error_count"],
                 )
-                time.sleep(settings.crawl_request_delay_sec)
+                import random
+
+                jitter = float(getattr(settings, "crawl_delay_jitter_sec", 0.8) or 0)
+                time.sleep(settings.crawl_request_delay_sec + random.uniform(0, max(0.0, jitter)))
 
     def run_full_crawl(self, resume: bool = True) -> CrawlJob:
         job = CrawlJob(status="running", started_at=datetime.utcnow(), checkpoint="{}")
@@ -464,7 +481,7 @@ class CrawlEngine:
             self.stats["items_filtered"] += 1
             return
         # 蒙通社/政府综合门户：标题本身也要能过涉毒，避免“军演/画展”靠正文噪声入库
-        if any(x in (src.org_name or "") for x in ("蒙通社", "zasag", "政府门户", "政府国际合作", "移民局")):
+        if any(x in (src.org_name or "") for x in ("蒙通社", "政府主站", "政府国际合作", "移民局", "外交部")):
             if not is_drug_related(title, None, loose=False):
                 self.stats["items_filtered"] += 1
                 return
@@ -585,6 +602,8 @@ class CrawlEngine:
         for url in links:
             if added >= 3:
                 break
+            if is_forbidden_url(url):
+                continue
             low = url.lower()
             if not any(h in low for h in column_hints):
                 continue
@@ -620,7 +639,7 @@ class CrawlEngine:
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8), reraise=False)
     def _fetch(self, client: httpx.Client, url: str) -> Optional[str]:
-        if not is_allowed_url(url):
+        if not is_allowed_url(url) or is_forbidden_url(url):
             return None
         try:
             resp = client.get(url)
