@@ -22,6 +22,7 @@ from app.crawler.filters import (
     is_allowed_url,
     is_critical,
     is_drug_related,
+    is_mongolia_country_related,
     is_stale,
     normalize_text,
     parse_date_guess,
@@ -129,18 +130,28 @@ class CrawlEngine:
         self.db.refresh(job)
         try:
             self.seed_sources()
+            # 只扫核心种子页，不扫历史发现的上百条子栏目（那是慢的主因）
+            wanted_urls = set()
+            for s in CORE_OFFICIAL_SOURCES:
+                for path in s.get("seed_paths") or ["/"]:
+                    from urllib.parse import urljoin
+
+                    wanted_urls.add(
+                        urljoin(s["base_url"].rstrip("/") + "/", path.lstrip("/")).rstrip("/")
+                    )
             sources = (
                 self.db.query(Source)
                 .filter(Source.is_active.is_(True))
+                .filter(Source.is_seed.is_(True))
                 .order_by(Source.system_id, Source.id)
                 .all()
             )
             sources = [
                 s for s in sources
                 if s.org_name in core_orgs
-                or any(h in (s.base_url or "").lower() or h in (s.page_url or "").lower() for h in core_hosts)
+                or (s.page_url or "").rstrip("/") in wanted_urls
             ]
-            # 去重同 URL，优先种子
+            # 去重同 URL
             seen_url = set()
             uniq = []
             for s in sources:
@@ -149,7 +160,7 @@ class CrawlEngine:
                     continue
                 seen_url.add(u)
                 uniq.append(s)
-            sources = uniq[:80]
+            sources = uniq[:40]
             total = len(sources)
             self._emit(
                 "phase",
@@ -425,18 +436,40 @@ class CrawlEngine:
             or (soup.title.get_text() if soup.title else "")
             or src.org_name
         )
-        # 去除脚本样式
-        for tag in soup(["script", "style", "noscript", "nav", "footer", "header"]):
+        # 去除脚本样式与站点导航，避免侧栏/相关推荐把毒品词污染进正文
+        for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "aside", "form"]):
             tag.decompose()
-        paragraphs = [normalize_text(p.get_text(" ", strip=True)) for p in soup.find_all(["p", "article", "li"])]
-        paragraphs = [p for p in paragraphs if len(p) > 20]
-        content = normalize_text("\n".join(paragraphs[:80]))
+        # 优先正文容器，避免全站 li/菜单误伤
+        main = (
+            soup.find("article")
+            or soup.find(attrs={"class": lambda c: c and any(x in str(c).lower() for x in ("content", "article", "news-body", "post"))})
+            or soup.find("main")
+            or soup
+        )
+        paragraphs = [
+            normalize_text(p.get_text(" ", strip=True))
+            for p in main.find_all(["p", "h2", "h3"])
+        ]
+        paragraphs = [p for p in paragraphs if len(p) > 25]
+        content = normalize_text("\n".join(paragraphs[:40]))
         summary = content[:400]
-        blob = f"{title}\n{summary}\n{content}"
-
-        if not is_drug_related(blob, extra_keywords, loose=settings.crawl_loose_filter):
+        # 入库判定只用标题+摘要，防止页脚/相关链接误放行
+        gate_blob = f"{title}\n{summary}"
+        if not is_drug_related(gate_blob, None, loose=False):
             self.stats["items_filtered"] += 1
             return
+        # UNODC 全球页必须点名蒙古，否则丢掉海地/萨赫勒等无关稿
+        host = (url or "").lower()
+        if "unodc.org" in host and not is_mongolia_country_related(gate_blob):
+            self.stats["items_filtered"] += 1
+            return
+        # 蒙通社/政府综合门户：标题本身也要能过涉毒，避免“军演/画展”靠正文噪声入库
+        if any(x in (src.org_name or "") for x in ("蒙通社", "zasag", "政府门户", "政府国际合作", "移民局")):
+            if not is_drug_related(title, None, loose=False):
+                self.stats["items_filtered"] += 1
+                return
+
+        blob = f"{title}\n{summary}\n{content}"
 
         published = parse_date_guess(blob) or parse_date_guess(html[:5000])
         if is_stale(published, max_days=settings.crawl_max_age_days):
@@ -453,9 +486,9 @@ class CrawlEngine:
             (IntelItem.url == url) | (IntelItem.content_hash == ch)
         ).first()
 
-        level = intel_level(blob)
-        category = classify_category(blob)
-        alert = is_critical(blob) or level == "紧急"
+        level = intel_level(gate_blob)
+        category = classify_category(gate_blob)
+        alert = is_critical(gate_blob) or level == "紧急"
 
         if existing:
             changed = existing.content_hash != ch
@@ -541,16 +574,16 @@ class CrawlEngine:
         )
 
     def _discover_child_sources(self, src: Source, links: List[str]) -> None:
-        if src.discover_depth >= settings.crawl_max_depth:
+        if src.discover_depth >= min(settings.crawl_max_depth, 1):
             return
-        # 栏目型链接优先
+        # 只发现明显涉毒栏目，避免 zasag/montsame 全站新闻膨胀到上百源
         column_hints = [
-            "news", "info", "press", "announcement", "legal", "prevention",
-            "cooperation", "report", "мэдээ", "зарлал", "drug", "narcotic",
+            "narcotic", "anti-drug", "antidrug", "drug-control",
+            "мансууруулах", "хар-тамхи", "anti-narcotics",
         ]
         added = 0
         for url in links:
-            if added >= 15:
+            if added >= 3:
                 break
             low = url.lower()
             if not any(h in low for h in column_hints):

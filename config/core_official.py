@@ -14,16 +14,10 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name": "蒙通社 MONTSAME（核心官方通讯社）",
         "org_name_mn": "МОНЦАМЭ",
         "base_url": "https://www.montsame.mn",
-        "seed_paths": [
-            "/",
-            "/mn",
-            "/en",
-            "/mn/news",
-            "/en/news",
-        ],
+        "seed_paths": ["/", "/mn/news", "/en/news"],
         "keywords_extra": [
-            "мансууруулах", "хар тамхи", "тэмцэх", "гааль", "цагдаа",
-            "narcotic", "drug", "anti-drug",
+            "мансууруулах", "хар тамхи", "наркотик", "narcotic",
+            "methamphetamine", "anti-drug",
         ],
         "lang": "mn",
         "source_type": "official",
@@ -35,18 +29,9 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name": "国家警察总局独立缉毒局（核心）",
         "org_name_mn": "Цагдаагийн ерөнхий газар",
         "base_url": "https://www.police.gov.mn",
-        "seed_paths": [
-            "/",
-            "/mn",
-            "/en",
-            "/mn/news",
-            "/en/news",
-            "/mn/media",
-            "/en/media",
-        ],
+        "seed_paths": ["/", "/mn/news", "/en/news"],
         "keywords_extra": [
-            "мансууруулах", "хар тамхи", "тэмцэх", "баривчилгаа",
-            "газар хил", "цагдаа",
+            "мансууруулах", "хар тамхи", "наркотик", "метамфетамин",
         ],
         "lang": "mn",
         "source_type": "official",
@@ -58,18 +43,9 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name": "海关边境管控总局（核心）",
         "org_name_mn": "Гаалийн ерөнхий газар",
         "base_url": "https://www.customs.gov.mn",
-        "seed_paths": [
-            "/",
-            "/mn",
-            "/en",
-            "/mn/news",
-            "/en/news",
-            "/mn/media-center",
-            "/en/media-center",
-        ],
+        "seed_paths": ["/", "/mn/news", "/en/news"],
         "keywords_extra": [
-            "мансууруулах", "хар тамхи", "гааль", "газар хил",
-            "баривчилгаа", "контрабанд",
+            "мансууруулах", "хар тамхи", "наркотик", "контрабанд",
         ],
         "lang": "mn",
         "source_type": "official",
@@ -85,11 +61,9 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
             "/mongolia/",
             "/unodc/en/easternasiaandpacific/mongolia.html",
             "/easternasiaandpacific/mongolia.html",
-            "/easternasiaandpacific/index.html",
-            "/unodc/en/drug-trafficking/index.html",
         ],
         "keywords_extra": [
-            "Mongolia", "drug", "narcotic", "trafficking", "UNODC",
+            "Mongolia", "narcotic", "methamphetamine", "illicit drug",
         ],
         "lang": "en",
         "source_type": "official",
@@ -104,11 +78,9 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "seed_paths": [
             "/mn/organization/moh",
             "/en/organization/moh",
-            "/mn/news",
-            "/en/news",
         ],
         "keywords_extra": [
-            "мансууруулах", "зохицуулалттай эм", "хар тамхи", "сэргээх төв",
+            "мансууруулах", "хар тамхи", "наркотик",
         ],
         "lang": "mn",
         "source_type": "official",
@@ -120,8 +92,8 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name": "卫生部官网（health/mohs）",
         "org_name_mn": "Эрүүл мэндийн яам",
         "base_url": "https://www.mohs.mn",
-        "seed_paths": ["/", "/mn", "/en", "/news"],
-        "keywords_extra": ["мансууруулах", "эм", "донтсон", "сэргээх төв"],
+        "seed_paths": ["/", "/news"],
+        "keywords_extra": ["мансууруулах", "хар тамхи", "донтсон"],
         "lang": "mn",
         "source_type": "official",
         "core_official": True,
@@ -133,14 +105,11 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name_mn": "Засгийн газар",
         "base_url": "https://zasag.mn",
         "seed_paths": [
-            "/",
             "/anti-narcotics",
-            "/mn",
             "/news",
-            "/mn/news",
         ],
         "keywords_extra": [
-            "мансууруулах", "хар тамхи", "тэмцэх", "зохицуулах",
+            "мансууруулах", "хар тамхи", "наркотик",
         ],
         "lang": "mn",
         "source_type": "official",
@@ -152,8 +121,8 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name": "蒙古国政府门户（禁毒相关）",
         "org_name_mn": "www.gov.mn",
         "base_url": "https://www.gov.mn",
-        "seed_paths": ["/", "/mn", "/mn/news", "/en/news"],
-        "keywords_extra": ["мансууруулах", "хар тамхи", "тэмцэх"],
+        "seed_paths": ["/mn/news"],
+        "keywords_extra": ["мансууруулах", "хар тамхи", "наркотик"],
         "lang": "mn",
         "source_type": "official",
         "core_official": True,
@@ -165,8 +134,8 @@ def build_core_site_search_queries(when: str = "30d") -> List[dict]:
     """针对核心官方域名的 site: 搜索（补官网直采盲区）。"""
     when_suffix = f" when:{when}" if when else ""
     drug = (
-        "мансууруулах OR \"хар тамхи\" OR narcotic OR drug OR trafficking "
-        "OR тэмцэх OR баривчилгаа OR гааль"
+        "мансууруулах OR \"хар тамхи\" OR narcotic OR methamphetamine "
+        "OR \"illegal drug\" OR \"drug trafficking\""
     )
     sites = [
         ("蒙通社站内", "montsame.mn", 8, "mn", "mn", "MN:mn"),

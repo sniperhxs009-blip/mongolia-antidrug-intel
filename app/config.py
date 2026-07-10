@@ -26,18 +26,18 @@ class Settings(BaseSettings):
 
     # 新闻监测默认每小时；可选 every_30m | hourly | every_6h | every_12h | daily
     crawl_interval: str = "hourly"
-    crawl_request_delay_sec: float = 1.2
-    crawl_max_pages_per_source: int = 80
+    crawl_request_delay_sec: float = 0.5
+    crawl_max_pages_per_source: int = 40
     crawl_user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
-    crawl_timeout_sec: int = 35
-    crawl_max_depth: int = 3
+    crawl_timeout_sec: int = 25
+    crawl_max_depth: int = 1
     enable_translation: bool = True
     enable_search_feeds: bool = True
-    # 官网采集时是否使用宽松相关判定
-    crawl_loose_filter: bool = True
+    # 官网采集强制严格涉毒判定（勿开宽松）
+    crawl_loose_filter: bool = False
     # SSL 异常站点仍尝试抓取
     crawl_ssl_verify: bool = False
     # 过期阈值（天）：文档要求近30日官方发布
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # 是否采集检察院/海关/PDF 等官方统计
     enable_official_stats: bool = True
     # 是否采集 Reddit/论坛/补充搜索引擎
-    enable_forum_search: bool = True
+    enable_forum_search: bool = False
     # 定时任务默认只抓新闻（长期监测）；每天固定时刻再跑全量研判
     crawl_mode: str = "news"  # news | full
     # Google News / 官网 site: 时间窗：文档要求近30日
@@ -56,8 +56,8 @@ class Settings(BaseSettings):
     forum_when: str = "30d"
     # 新闻监测轮也跑核心官网增量（否则只能靠搜索聚合）
     enable_core_official_in_news: bool = True
-    crawl_max_pages_official: int = 20
-    crawl_max_pages_core: int = 12
+    crawl_max_pages_official: int = 8
+    crawl_max_pages_core: int = 6
 
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465

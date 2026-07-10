@@ -168,6 +168,31 @@ NEGATIVE_PATTERNS = [
     r"\bsteroide?s?\b",
     r"анаболик",
     r"допинг",
+    r"军事演习",
+    r"联合军演",
+    r"military\s+exercise",
+    r"joint\s+exercise",
+    r"版画",
+    r"画展",
+    r"exhibition",
+    r"printmaking",
+    r"马背射箭",
+    r"世界马日",
+    r"horse\s+archery",
+    r"股市",
+    r"股票",
+    r"stock\s+market",
+    r"暴跌",
+    r"地震",
+    r"earthquake",
+    r"委内瑞拉",
+    r"venezuela",
+    r"anti[- ]?corruption",
+    r"煤炭盗窃",
+    r"资源盗窃",
+    r"railway",
+    r"data\s+center",
+    r"数字化转型",
 ]
 
 
@@ -265,6 +290,9 @@ def is_drug_related(text: str, extra_keywords: Optional[list] = None, loose: boo
         "цагдаа", "гааль", "гэмт хэрэг", "урьдчилан сэргийлэх", "нөхөн сэргээх",
         "эмчилгээ", "хилээр нэвтрүүлэх", "донтсон", "донтлох", "донтлол",
         "зохицуулалттай эм", "тамхины бодис",
+        # 极宽词：军演/反腐/海关日常/联合国首页都会误伤
+        "тэмцэх", "газар хил", "хилээр", "зохицуулах", "сэргээх төв",
+        "mongolia", "unodc", "united nations", "联合国",
     }
     keys = list(DRUG_KEYWORDS)
     if extra_keywords:
@@ -281,9 +309,10 @@ def is_drug_related(text: str, extra_keywords: Optional[list] = None, loose: boo
     narcotic_context = any(
         x in blob
         for x in [
-            "narcotic", "heroin", "cocaine", "meth", "cannabis", "marijuana",
+            "narcotic", "heroin", "cocaine", "methamphetamine", "cannabis", "marijuana",
             "opium", "fentanyl", "ketamine", "мансууруулах", "хар тамхи",
-            "наркотик", "毒品", "毒贩", "缉毒", "illegal", "illicit",
+            "наркотик", "毒品", "毒贩", "缉毒", "illegal drug", "illicit drug",
+            "drug traffick", "drug smugg",
         ]
     )
     if has_weak and narcotic_context:
@@ -349,19 +378,17 @@ def is_mongolia_country_related(text: str) -> bool:
 
 def classify_category(text: str) -> str:
     t = (text or "").lower()
-    # 人口贩运不要进跨境毒情
-    if re.search(r"human\s+traffick|sex\s+traffick|people\s+traffick|人口贩运|拐卖", t):
-        if not is_drug_related(t):
-            return "综合"
+    if not is_drug_related(t, loose=False):
+        return "综合"
     rules = [
-        ("跨境毒情", ["跨境", "口岸", "边境", "хил", "гааль", "border", "customs", "drug traffick", "smuggl"]),
-        ("新型毒品", ["合成", "芬太尼", "冰毒", "синтетик", "synthetic", "meth", "fentanyl", "NPS", "метамфетамин"]),
+        ("跨境毒情", ["跨境贩毒", "口岸缉毒", "边境走私", "drug traffick", "drug smugg"]),
+        ("新型毒品", ["合成毒品", "芬太尼", "冰毒", "synthetic cannabinoid", "methamphetamine", "fentanyl", "метамфетамин", "нитазен"]),
         ("制毒原料", ["易制毒", "麻精", "precursor", "прекурсор", "controlled substance"]),
-        ("戒毒康复", ["戒毒", "康复", "成瘾", "нөхөн сэргээх", "донтсон", "rehab", "addiction"]),
-        ("国际协作", ["UNODC", "国际", "олон улсын", "cooperation", "外交"]),
-        ("执法行动", ["缉毒", "查获", "专项", "баривчилгаа", "seizure", "operation", "цагдаа", "arrest"]),
-        ("政策法规", ["立法", "法规", "新法", "хууль", "legal", "regulation", "policy"]),
-        ("媒体报道", ["news", "мэдээ", "报道", "通讯"]),
+        ("戒毒康复", ["戒毒", "康复", "成瘾", "нөхөн сэргээх", "донтсон", "rehab"]),
+        ("国际协作", ["UNODC", "国际禁毒", "anti-drug cooperation"]),
+        ("执法行动", ["缉毒", "查获毒品", "drug seizure", "drug bust", "баривчилгаа"]),
+        ("政策法规", ["立法", "法规", "管制目录", "regulation"]),
+        ("媒体报道", ["news", "мэдээ", "报道"]),
     ]
     for name, kws in rules:
         for kw in kws:

@@ -98,31 +98,21 @@ def run_intel_cycle(
             stats_collector = OfficialStatsCollector(db, on_event=on_event)
             result["official_stats"] = stats_collector.run(mode="news" if news_only else "full")
 
-        # 文档要求：直采核心官方站点。新闻轮跑核心增量；全量轮跑完整官网巡检。
+        # 文档要求：直采核心官方站点。全量也只跑核心官网（避免 150+ 源扫几天）
         if settings.enable_official_crawl:
             old_max = settings.crawl_max_pages_per_source
             try:
-                if news_only and getattr(settings, "enable_core_official_in_news", True):
-                    emit(
-                        "phase",
-                        status="running",
-                        phase="核心官网增量",
-                        message="正在增量扫描蒙通社/警察/海关/UNODC/卫生/政府核心官网…",
-                    )
-                    settings.crawl_max_pages_per_source = min(
-                        old_max, int(getattr(settings, "crawl_max_pages_core", 12) or 12)
-                    )
-                    crawler = CrawlEngine(db, on_event=on_event)
-                    job = crawler.run_core_official_crawl(resume=False)
-                elif not news_only:
-                    emit("phase", status="running", phase="官网媒体巡检", message="正在扫描官方与媒体站点…")
-                    settings.crawl_max_pages_per_source = min(
-                        old_max, int(getattr(settings, "crawl_max_pages_official", 20) or 20)
-                    )
-                    crawler = CrawlEngine(db, on_event=on_event)
-                    job = crawler.run_full_crawl(resume=True)
-                else:
-                    job = None
+                emit(
+                    "phase",
+                    status="running",
+                    phase="核心官网巡检",
+                    message="正在扫描蒙通社/警察/海关/UNODC/卫生/政府核心官网（限速精简）…",
+                )
+                settings.crawl_max_pages_per_source = min(
+                    old_max, int(getattr(settings, "crawl_max_pages_core", 6) or 6)
+                )
+                crawler = CrawlEngine(db, on_event=on_event)
+                job = crawler.run_core_official_crawl(resume=False)
             finally:
                 settings.crawl_max_pages_per_source = old_max
 
