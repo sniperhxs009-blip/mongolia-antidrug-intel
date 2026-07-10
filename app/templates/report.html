@@ -1,33 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html>
 <head>
-  <meta charset="utf-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1"/>
-  <title>研判报告 - {{ report.title }}</title>
-  <link rel="stylesheet" href="/static/style.css"/>
-  <style>
-    /* 强制报告页全文白色，覆盖历史内联深色样式 */
-    .report, .report * { color: #ffffff !important; }
-    .report a, .report a:hover { color: #7dd3fc !important; }
-  </style>
+<link rel="stylesheet" href="/static/style.css">
+<title>{{report.title}}</title>
 </head>
 <body>
-<div class="shell">
-  <header class="topbar">
-    <div class="brand">
-      <div class="mark">禁</div>
-      <div>
-        <h1>情报研判报告</h1>
-        <p class="sub">报告正文为中文；外文标题已自动翻译</p>
-      </div>
-    </div>
-    <nav><a href="/">返回指挥台</a></nav>
-  </header>
-  <main class="wrap">
-    <article class="panel report">
-      {{ report.content_html | safe }}
-    </article>
-  </main>
-</div>
+{{report.content_html|safe}}
 </body>
-</html>
