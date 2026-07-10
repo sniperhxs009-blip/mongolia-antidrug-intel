@@ -298,7 +298,7 @@ SOURCES = [
 ]
 
 # 由词库动态生成搜索任务（全量也强制近期 when）
-SEARCH_FEEDS = build_search_queries(mode="full", when="30d")
+SEARCH_FEEDS = build_search_queries(mode="full", when="1y")
 
 DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS

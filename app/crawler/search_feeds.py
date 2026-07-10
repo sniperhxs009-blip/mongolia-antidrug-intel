@@ -89,12 +89,12 @@ class SearchFeedCollector:
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
         if mode == "news":
-            when = getattr(settings, "news_when", "7d") or "7d"
+            when = getattr(settings, "news_when", "1y") or "1y"
             feeds = build_search_queries(mode="news", when=when)
             phase = "最新新闻监测"
             msg = f"启动新闻监测（近{when}），共 {len(feeds)} 路任务"
         else:
-            when = getattr(settings, "full_when", "30d") or "30d"
+            when = getattr(settings, "full_when", "1y") or "1y"
             feeds = build_search_queries(mode="full", when=when)
             phase = "关键词全量搜索"
             msg = f"启动全量搜索（近{when}，含论坛/多引擎），共 {len(feeds)} 路任务"
@@ -260,9 +260,18 @@ class SearchFeedCollector:
         if not url:
             from urllib.parse import quote
 
+            # 与 NEWS_WHEN/FULL_WHEN 对齐：默认近一年
+            t = "year"
+            w = (getattr(settings, "forum_when", None) or getattr(settings, "full_when", "1y") or "1y").lower()
+            if w in ("1d", "d"):
+                t = "day"
+            elif w in ("7d", "w", "week"):
+                t = "week"
+            elif w in ("30d", "m", "month"):
+                t = "month"
             url = (
                 "https://www.reddit.com/search.json?"
-                f"q={quote(feed.get('query') or '')}&sort=new&t=month&limit=25"
+                f"q={quote(feed.get('query') or '')}&sort=new&t={t}&limit=25"
             )
         headers = {"User-Agent": "MN-AntiDrug-IntelBot/1.0 (osint research)"}
         resp = client.get(url, headers=headers)
@@ -334,7 +343,15 @@ class SearchFeedCollector:
         url = feed.get("search_url")
         if not url:
             q = feed.get("query") or ""
-            url = f"https://www.google.com/search?q={quote_plus(q)}&num=20&hl=en&tbs=qdr:m"
+            w = (getattr(settings, "forum_when", None) or getattr(settings, "full_when", "1y") or "1y").lower()
+            qdr = "y"
+            if w in ("1d", "d"):
+                qdr = "d"
+            elif w in ("7d", "w", "week"):
+                qdr = "w"
+            elif w in ("30d", "m", "month", "90d"):
+                qdr = "m"
+            url = f"https://www.google.com/search?q={quote_plus(q)}&num=20&hl=en&tbs=qdr:{qdr}"
         resp = client.get(url)
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")

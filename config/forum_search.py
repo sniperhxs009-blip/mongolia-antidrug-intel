@@ -1,14 +1,29 @@
 """
 论坛 / 社区 / 补充搜索引擎配置
 覆盖：Reddit、全球论坛讨论、DuckDuckGo/Bing 新闻 RSS 等
-严格近期时效由调用方传入 when（如 7d / 30d）
+时效由调用方传入 when（如 7d / 30d / 1y）；蒙古涉毒信源稀疏，默认宜用 1y
 """
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 
 SYSTEM_ID = 11
 SYSTEM_NAME = "全球论坛社区与补充搜索"
+
+
+def _when_engine_params(when: str) -> Tuple[str, str, str]:
+    """Map Google-style when -> (reddit t=, bing interval, ddg df)."""
+    w = (when or "1y").strip().lower()
+    if w in ("1d", "d"):
+        return "day", "1", "d"
+    if w in ("7d", "w", "week"):
+        return "week", "7", "w"
+    if w in ("30d", "m", "month"):
+        return "month", "30", "m"
+    if w in ("90d",):
+        return "year", "30", "y"
+    # 1y / default
+    return "year", "30", "y"
 
 # 允许入库的论坛/社区域名
 FORUM_ALLOWED_DOMAINS = [
@@ -39,12 +54,13 @@ DRUG_CORE = (
 )
 
 
-def build_forum_search_queries(mode: str = "full", when: str = "30d") -> List[dict]:
-    """生成 Reddit/论坛/补充引擎搜索任务。when 必须带，保证近期。"""
+def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dict]:
+    """生成 Reddit/论坛/补充引擎搜索任务。when 必须带。"""
     tasks: List[dict] = []
     news_mode = mode == "news"
-    when = when or "30d"
+    when = when or "1y"
     when_suffix = f" when:{when}"
+    reddit_t, bing_interval, ddg_df = _when_engine_params(when)
 
     # —— Reddit 定向（Google News + 网页向查询）——
     reddit_queries = [
@@ -102,7 +118,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "30d") -> List[di
             "gl": "us",
             "ceid": "US:en",
             "engine": "reddit_search",
-            "search_url": f"https://www.reddit.com/search.json?q={q}&sort=new&t=month&limit=25",
+            "search_url": f"https://www.reddit.com/search.json?q={q}&sort=new&t={reddit_t}&limit=25",
             "require_mongolia": True,
             "tier": "forum",
             "source_kind": "forum",
@@ -153,7 +169,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "30d") -> List[di
             "gl": "us",
             "ceid": "US:en",
             "engine": "ddg_news",
-            "search_url": f"https://duckduckgo.com/news.js?q={q}&o=json&df=m",  # 近月
+            "search_url": f"https://duckduckgo.com/news.js?q={q}&o=json&df={ddg_df}",
             "require_mongolia": True,
             "tier": "forum",
             "source_kind": "search_engine",
@@ -192,7 +208,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "30d") -> List[di
             "search_url": (
                 "https://www.bing.com/news/search?q="
                 + q.replace(" ", "+")
-                + "&qft=interval%3d%227%22&format=RSS"  # 近7天
+                + f"&qft=interval%3d%22{bing_interval}%22&format=RSS"
             ),
             "require_mongolia": True,
             "tier": "forum",
