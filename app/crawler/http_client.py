@@ -17,6 +17,9 @@ _proxy_cycle = None
 
 
 def _proxy_list() -> List[str]:
+    # 硬性禁令：禁止翻墙代理
+    if getattr(settings, "crawl_forbid_proxy", True):
+        return []
     raw = (getattr(settings, "crawl_proxy_urls", "") or "").strip()
     if not raw:
         single = (getattr(settings, "crawl_proxy_url", "") or "").strip()

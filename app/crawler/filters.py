@@ -217,6 +217,13 @@ def normalize_text(text: str) -> str:
 
 def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
     try:
+        from config.core_official import is_forbidden_url
+
+        if is_forbidden_url(url):
+            return False
+    except Exception:
+        pass
+    try:
         host = urlparse(url).netloc.lower().split(":")[0]
     except Exception:
         return False
@@ -259,6 +266,15 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
 
 
 def _has_negative(blob: str) -> bool:
+    try:
+        from config.core_official import TOPIC_BLACKLIST
+
+        low = blob.lower()
+        for t in TOPIC_BLACKLIST:
+            if t.lower() in low:
+                return True
+    except Exception:
+        pass
     for pat in NEGATIVE_PATTERNS:
         if re.search(pat, blob, flags=re.IGNORECASE):
             return True
@@ -350,7 +366,8 @@ def is_mongolia_country_related(text: str) -> bool:
     t = text or ""
     tl = t.lower()
     if "内蒙古" in t and "蒙古国" not in t:
-        return False
+        if not any(x in t for x in ("中蒙", "扎门", "甘其毛都", "二连", "口岸缉毒")):
+            return False
     if re.search(r"\binner mongolia\b", tl):
         return False
     # 俄罗斯乌兰乌德 / 布里亚特本地新闻
@@ -368,11 +385,14 @@ def is_mongolia_country_related(text: str) -> bool:
     markers = [
         "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
         "монгол улс", "蒙古国", "乌兰巴托",
+        "扎门乌德", "甘其毛都", "二连浩特", "中蒙口岸", "中蒙边境",
+        "zamyn-uud", "gashuun", "erenhot",
     ]
     if any(m in tl for m in markers) or "蒙古国" in t:
         return True
-    # 中文「蒙古」但非「内蒙古」：常见于「蒙古警方/海关/外交/船只」
     if re.search(r"(?<!内)蒙古", t):
+        return True
+    if "内蒙古" in t and any(x in t for x in ("蒙古国", "中蒙", "扎门", "甘其毛都", "二连")):
         return True
     # 单独「монгол」过宽，需搭配毒品语境
     if "монгол" in tl and re.search(

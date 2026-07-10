@@ -111,6 +111,13 @@ class SearchFeedCollector:
         # 论坛开关
         if not getattr(settings, "enable_forum_search", True):
             feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
+        # 黑名单 URL 任务直接剔除
+        try:
+            from config.core_official import is_forbidden_url
+
+            feeds = [f for f in feeds if not is_forbidden_url(f.get("search_url") or f.get("query") or "")]
+        except Exception:
+            pass
 
         total = len(feeds)
         self._emit(
@@ -433,7 +440,14 @@ class SearchFeedCollector:
                 continue
             full = urljoin(search_url, href)
             host = urlparse(full).netloc.lower()
-            if not any(x in host for x in ("gogo.mn", "montsame.mn", "ikon.mn", "news.mn")):
+            if not any(x in host for x in (
+                "montsame.mn", "nncc626.com", "chinanews.com", "unodc.org",
+                "mongolia.un.org", "nmg.110.gov.cn", "odkb-csto.org",
+                "scoec.gov.cn", "mongolnews.mn", "ubpost",
+            )):
+                continue
+            from config.core_official import is_forbidden_url
+            if is_forbidden_url(full):
                 continue
             path = urlparse(full).path.lower()
             if path in ("/", "") or "search" in path:
@@ -489,6 +503,9 @@ class SearchFeedCollector:
         title = normalize_text(title)
         summary = normalize_text(summary)
         if not title:
+            return
+        if not is_allowed_url(url) and not (url or "").startswith("search://"):
+            self.stats["items_filtered"] += 1
             return
         body = f"{title}\n{summary}"
         body_l = body.lower()

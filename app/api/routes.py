@@ -96,6 +96,63 @@ def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat(), "app": settings.app_name}
 
 
+@router.get("/api/self-check")
+def self_check(db: Session = Depends(get_db)):
+    """全量修复版自检报告。"""
+    from config.core_official import (
+        CORE_OFFICIAL_SOURCES,
+        FORBIDDEN_HOSTS,
+        FORBIDDEN_PATH_FRAGMENTS,
+        KW_EN,
+        KW_MN,
+        KW_ZH,
+        TOPIC_BLACKLIST,
+        build_core_site_search_queries,
+        is_forbidden_url,
+    )
+    from config.drug_lexicon import all_drug_keywords
+
+    samples = [
+        "https://zasag.mn/anti-narcotics",
+        "https://www.unodc.org/mongolia/",
+        "https://police.gov.mn/",
+        "https://customs.gov.mn/",
+        "https://health.gov.mn/drug-control",
+        "https://shturl.cc/x",
+        "https://montsame.mn/cn",
+        "https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html",
+    ]
+    blocked = [u for u in samples if is_forbidden_url(u)]
+    allowed = [u for u in samples if not is_forbidden_url(u)]
+    tasks = build_core_site_search_queries(settings.news_when)
+    intel_n = db.query(IntelItem).count()
+    return {
+        "status": "ok",
+        "report": {
+            "effective_seed_sites": len(CORE_OFFICIAL_SOURCES),
+            "blacklist_hosts": len(FORBIDDEN_HOSTS),
+            "blacklist_path_rules": len(FORBIDDEN_PATH_FRAGMENTS),
+            "keyword_lexicon_size": len(all_drug_keywords()),
+            "whitelist_zh_en_mn": len(KW_ZH) + len(KW_EN) + len(KW_MN),
+            "topic_blacklist_size": len(TOPIC_BLACKLIST),
+            "search_tasks": len(tasks),
+            "proxy_forbidden": bool(getattr(settings, "crawl_forbid_proxy", True)),
+            "official_crawl_disabled": not bool(settings.enable_official_crawl),
+            "latest_intel_count": intel_n,
+            "sample_blocked": blocked,
+            "sample_allowed": allowed,
+            "checks": {
+                "blacklist_blocks_gov_mn": is_forbidden_url("https://police.gov.mn/news"),
+                "no_anti_narcotics_path": is_forbidden_url("https://example.com/anti-narcotics"),
+                "montsame_allowed": not is_forbidden_url("https://montsame.mn/cn"),
+                "unodc_wdr_allowed": not is_forbidden_url(
+                    "https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html"
+                ),
+            },
+        },
+    }
+
+
 @router.get("/api/stats")
 def stats(db: Session = Depends(get_db)):
     return {

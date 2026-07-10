@@ -319,42 +319,28 @@ DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS
 
 ALLOWED_DOMAINS = [
-    "police.gov.mn", "www.police.gov.mn",
-    "ulaanbaatar.mn", "www.ulaanbaatar.mn",
-    "mohs.mn", "www.mohs.mn", "moh.mn", "www.moh.mn",
-    "mmra.gov.mn", "www.mmra.gov.mn",
-    "ecustoms.mn", "www.ecustoms.mn",
-    "bpo.gov.mn", "www.bpo.gov.mn",
-    "mofa.gov.mn", "www.mofa.gov.mn",
-    "gia.gov.mn", "www.gia.gov.mn",
-    "prosecutor.mn", "www.prosecutor.mn",
-    "gs.gov.mn", "www.gs.gov.mn",
-    "customs.gov.mn", "www.customs.gov.mn",
-    "immigration.gov.mn", "www.immigration.gov.mn",
-    "zasag.mn", "www.zasag.mn",
-    "gov.mn", "www.gov.mn",
-    "mongolia.gov.mn", "www.mongolia.gov.mn",
-    "unodc.org", "www.unodc.org",
-    "legalinfo.mn", "www.legalinfo.mn",
+    # 全量修复版：国内裸网可直连合法源（禁止蒙古 .gov.mn）
     "montsame.mn", "www.montsame.mn",
-    "gogo.mn", "www.gogo.mn", "web.gogo.mn",
-    "ikon.mn", "www.ikon.mn",
-    "news.mn", "www.news.mn",
-    "ubpost.mn", "www.ubpost.mn",
-    "1212.mn", "www.1212.mn",
-    "mnb.mn", "www.mnb.mn", "news.mnb.mn",
-    "parliament.mn", "www.parliament.mn",
+    "nncc626.com", "www.nncc626.com",
+    "unodc.org", "www.unodc.org",
+    "mongolia.un.org", "www.mongolia.un.org",
+    "chinanews.com", "www.chinanews.com",
+    "nmg.110.gov.cn", "gat.nmg.110.gov.cn",
+    "odkb-csto.org", "www.odkb-csto.org",
+    "scoec.gov.cn", "www.scoec.gov.cn",
+    "mongolnews.mn", "ubpost.mongolnews.mn", "www.ubpost.mn", "ubpost.mn",
+    "news.google.com",
 ]
 
-# 合并全球媒体与国际机构域名
+ALLOW_ANY_MN_DOMAIN = False
+ALLOW_GLOBAL_MEDIA = False
+ALLOW_FORUM_DOMAINS = False
+
+# 全量修复版：不再合并全球媒体/论坛域名（避免绕过黑名单）
 from config.global_media import GLOBAL_ALLOWED_DOMAINS  # noqa: E402
 from config.forum_search import FORUM_ALLOWED_DOMAINS  # noqa: E402
 
-ALLOWED_DOMAINS = list(
-    dict.fromkeys(ALLOWED_DOMAINS + GLOBAL_ALLOWED_DOMAINS + FORUM_ALLOWED_DOMAINS)
-)
-
-ALLOW_ANY_MN_DOMAIN = True
-# 搜索聚合入库时允许全球主流媒体域名（已在白名单）
-ALLOW_GLOBAL_MEDIA = True
-ALLOW_FORUM_DOMAINS = True
+if ALLOW_GLOBAL_MEDIA:
+    ALLOWED_DOMAINS = list(dict.fromkeys(ALLOWED_DOMAINS + GLOBAL_ALLOWED_DOMAINS))
+if ALLOW_FORUM_DOMAINS:
+    ALLOWED_DOMAINS = list(dict.fromkeys(ALLOWED_DOMAINS + FORUM_ALLOWED_DOMAINS))

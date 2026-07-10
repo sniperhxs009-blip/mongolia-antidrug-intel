@@ -1,119 +1,156 @@
 """
-修正后核心官方种子：仅真实挂靠站点，禁止虚构专栏路径。
+全量修复版种子与黑名单。
 
-已剔除：shturl.cc、zasag.mn/anti-narcotics、health.gov.mn/drug-control、
-unodc.org/mongolia/、customs.gov.mn（国内 IP 常 SSL 超时）。
+硬性禁令：
+- 禁止访问全部蒙古本土 .gov.mn 及虚构专栏路径
+- 禁止翻墙代理；仅国内裸网可直连公开域名
+- 禁止自动拼接 /anti-narcotics、/drug-control 等后缀
+- 采集模式：关键词检索式增量，不做全站递归
 """
 from __future__ import annotations
 
 from typing import List
+from urllib.parse import quote_plus, urlparse
 
-# 禁止程序自动拼接的虚构路径片段
+# —— 永久黑名单（命中即跳过，不探测、不拼接）——
+FORBIDDEN_HOST_SUFFIXES = (
+    ".gov.mn",
+    "gov.mn",
+)
+FORBIDDEN_HOSTS = {
+    "shturl.cc",
+    "www.shturl.cc",
+    "customs.gov.mn",
+    "www.customs.gov.mn",
+    "police.gov.mn",
+    "www.police.gov.mn",
+    "bpo.gov.mn",
+    "www.bpo.gov.mn",
+    "gia.gov.mn",
+    "www.gia.gov.mn",
+    "ecustoms.mn",
+    "www.ecustoms.mn",
+    "mohs.mn",
+    "www.mohs.mn",
+    "mmra.gov.mn",
+    "www.mmra.gov.mn",
+    "mofa.gov.mn",
+    "www.mofa.gov.mn",
+    "zasag.mn",
+    "www.zasag.mn",
+    "health.gov.mn",
+    "www.health.gov.mn",
+}
 FORBIDDEN_PATH_FRAGMENTS = (
     "/anti-narcotics",
     "/drug-control",
     "/antidrug",
     "/anti_drug",
+    "/narcotics",
     "shturl.cc",
+    "unodc.org/mongolia",
+    "unodc.org/unodc/mongolia",
 )
 
-# 蒙/英双语言入库白名单（命中才可入库；与 filters 强词对齐）
-CORE_DRUG_WHITELIST_MN = [
-    "хар тамхи",
-    "мансууруулах бодис",
-    "мансууруулах",
-    "тэмцэх хар тамхи",
-    "газар хил худалдаа",
-    "сэргээх төв",
-    "синтетик мансууруулах бодис",
-    "наркотик",
+# 三语检索词
+KW_ZH = [
+    "毒品", "缉毒", "禁毒", "贩毒", "戒毒", "芬太尼", "合成大麻素",
+    "安纳咖", "新型毒品", "毒情", "麻醉药品",
 ]
-CORE_DRUG_WHITELIST_EN = [
-    "narcotics",
-    "narcotic",
-    "drug seizure",
-    "fentanyl",
-    "synthetic cannabis",
-    "cross-border trafficking",
-    "drug rehabilitation",
-    "UNODC Mongolia",
-    "methamphetamine",
-    "illicit drug",
-    "anti-drug",
+KW_EN = [
+    "narcotics", "drug seizure", "trafficking", "fentanyl",
+    "synthetic cannabis", "anaga", "rehabilitation",
+    "new psychoactive substance", "methamphetamine",
+]
+KW_MN = [
+    "хар тамхи", "мансууруулах бодис", "хар тамхитай тэмцэх",
+    "газар хил худалдаа", "сэргээх төв", "синтетик мансууруулах бодис",
 ]
 
+# 黑名单主题（误入库顽疾）
+TOPIC_BLACKLIST = [
+    "军演", "国防", "画展", "文娱", "股市", "金融监管", "市政", "基建",
+    "民生", "福利", "体育", "赛事", "宗教", "畜牧", "military exercise",
+    "exhibition", "stock market", "зохицуулах хороо", "санхүүгийн",
+]
+
+
+def is_forbidden_url(url: str) -> bool:
+    low = (url or "").lower().strip()
+    if not low:
+        return True
+    try:
+        host = urlparse(low if "://" in low else f"https://{low}").netloc.lower().split(":")[0]
+    except Exception:
+        host = ""
+    if host in FORBIDDEN_HOSTS:
+        return True
+    # 全部蒙古本土 .gov.mn
+    if host.endswith(".gov.mn") or host == "gov.mn":
+        return True
+    if any(f in low for f in FORBIDDEN_PATH_FRAGMENTS):
+        return True
+    return False
+
+
+# —— 一级核心：检索式种子（非递归全站）——
 CORE_OFFICIAL_SOURCES: List[dict] = [
-    # 1) 蒙通社 — 唯一高频综合涉毒新闻源
     {
         "system_id": 8,
         "system_name": "全国媒体与公开资讯",
-        "org_name": "蒙通社 MONTSAME",
-        "org_name_mn": "МОНЦАМЭ",
+        "org_name": "蒙通社中文站",
+        "org_name_mn": "МОНЦАМЭ CN",
         "base_url": "https://montsame.mn",
-        "seed_paths": ["/", "/mn", "/en"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + CORE_DRUG_WHITELIST_EN,
-        "lang": "mn",
-        "source_type": "official",
+        "seed_paths": ["/cn"],
+        "lang": "zh",
+        "source_type": "media",
         "core_official": True,
         "priority": 1,
+        "tier": "primary",
+        "search_mode_only": True,
     },
-    # 2) 警察总局 — 缉毒局通报挂靠主站（无独立缉毒局官网）
     {
-        "system_id": 2,
-        "system_name": "刑事缉毒执法体系",
-        "org_name": "国家警察总局",
-        "org_name_mn": "Цагдаагийн ерөнхий газар",
-        "base_url": "https://www.police.gov.mn",
-        "seed_paths": ["/", "/mn", "/en"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["баривчилгаа", "метамфетамин"],
-        "lang": "mn",
-        "source_type": "official",
+        "system_id": 8,
+        "system_name": "全国媒体与公开资讯",
+        "org_name": "蒙通社英文站",
+        "org_name_mn": "МОНЦАМЭ EN",
+        "base_url": "https://montsame.mn",
+        "seed_paths": ["/en"],
+        "lang": "en",
+        "source_type": "media",
         "core_official": True,
         "priority": 1,
+        "tier": "primary",
+        "search_mode_only": True,
     },
-    # 3) 政府主站 — 禁毒委员会会议/顶层政策挂靠
     {
-        "system_id": 1,
-        "system_name": "国家级禁毒统筹委员会体系",
-        "org_name": "蒙古国政府主站",
-        "org_name_mn": "mongolia.gov.mn",
-        "base_url": "https://mongolia.gov.mn",
-        "seed_paths": ["/", "/news"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["мансууруулах бодисын эсрэг"],
+        "system_id": 8,
+        "system_name": "全国媒体与公开资讯",
+        "org_name": "蒙通社蒙语站",
+        "org_name_mn": "МОНЦАМЭ MN",
+        "base_url": "https://montsame.mn",
+        "seed_paths": ["/mn"],
         "lang": "mn",
-        "source_type": "official",
+        "source_type": "media",
         "core_official": True,
         "priority": 1,
+        "tier": "primary",
+        "search_mode_only": True,
     },
-    # 4) 药品器械监管局 — 麻精药品管控
     {
-        "system_id": 3,
-        "system_name": "麻精药品与制毒原料行业监管体系",
-        "org_name": "药品医疗器械监管局 MMRA",
-        "org_name_mn": "MMRA",
-        "base_url": "https://mmra.gov.mn",
+        "system_id": 4,
+        "system_name": "边境海关缉毒查验体系",
+        "org_name": "中国禁毒网",
+        "org_name_mn": "NNCC",
+        "base_url": "http://www.nncc626.com",
         "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["зохицуулалттай эм", "прекурсор"],
-        "lang": "mn",
+        "lang": "zh",
         "source_type": "official",
         "core_official": True,
-        "priority": 2,
+        "priority": 1,
+        "tier": "primary",
+        "search_mode_only": True,
     },
-    # 5) 卫生部主站
-    {
-        "system_id": 3,
-        "system_name": "麻精药品与制毒原料行业监管体系",
-        "org_name": "卫生部 MOHS",
-        "org_name_mn": "Эрүүл мэндийн яам",
-        "base_url": "https://www.mohs.mn",
-        "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["донтсон", "сэргээх төв"],
-        "lang": "mn",
-        "source_type": "official",
-        "core_official": True,
-        "priority": 2,
-    },
-    # 6) UNODC 全球站 — 禁止 /mongolia/ 虚构子站，靠内容筛 Mongolia
     {
         "system_id": 7,
         "system_name": "国际禁毒协作机构",
@@ -121,124 +158,179 @@ CORE_OFFICIAL_SOURCES: List[dict] = [
         "org_name_mn": "UNODC",
         "base_url": "https://www.unodc.org",
         "seed_paths": [
-            "/easternasiaandpacific/index.html",
-            "/unodc/en/easternasiaandpacific/index.html",
-            "/unodc/en/drug-trafficking/index.html",
+            "/unodc/en/data-and-analysis/world-drug-report.html",
         ],
-        "keywords_extra": ["Mongolia", "UNODC Mongolia"] + CORE_DRUG_WHITELIST_EN,
         "lang": "en",
         "source_type": "official",
         "core_official": True,
+        "priority": 1,
+        "tier": "primary",
         "require_mongolia": True,
-        "priority": 2,
+        "search_mode_only": True,
     },
-    # 7) 边防总局
-    {
-        "system_id": 4,
-        "system_name": "边境海关缉毒查验体系",
-        "org_name": "边防总局 BPO",
-        "org_name_mn": "Хилийн цэргийн ерөнхий газар",
-        "base_url": "https://bpo.gov.mn",
-        "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["хил", "контрабанд"],
-        "lang": "mn",
-        "source_type": "official",
-        "core_official": True,
-        "priority": 2,
-    },
-    # 8) 海关电子服务站（替代 customs.gov.mn）
-    {
-        "system_id": 4,
-        "system_name": "边境海关缉毒查验体系",
-        "org_name": "海关电子服务站 eCustoms",
-        "org_name_mn": "eCustoms",
-        "base_url": "https://ecustoms.mn",
-        "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + ["гааль", "контрабанд"],
-        "lang": "mn",
-        "source_type": "official",
-        "core_official": True,
-        "priority": 2,
-    },
-    # 9) 外交部 — 国际禁毒协作
+    # —— 二级补充 ——
     {
         "system_id": 7,
         "system_name": "国际禁毒协作机构",
-        "org_name": "外交部 MOFA",
-        "org_name_mn": "ГХЯ",
-        "base_url": "https://mofa.gov.mn",
-        "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN + CORE_DRUG_WHITELIST_EN,
-        "lang": "mn",
+        "org_name": "联合国蒙古国办事处",
+        "org_name_mn": "UN Mongolia",
+        "base_url": "https://mongolia.un.org",
+        "seed_paths": ["/en"],
+        "lang": "en",
         "source_type": "official",
         "core_official": True,
-        "priority": 3,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
     },
-    # 10) 国家情报局
     {
-        "system_id": 2,
-        "system_name": "刑事缉毒执法体系",
-        "org_name": "国家情报局 GIA",
-        "org_name_mn": "Тагнуулын ерөнхий газар",
-        "base_url": "https://gia.gov.mn",
+        "system_id": 8,
+        "system_name": "全国媒体与公开资讯",
+        "org_name": "中新网",
+        "org_name_mn": "China News",
+        "base_url": "https://www.chinanews.com",
         "seed_paths": ["/"],
-        "keywords_extra": CORE_DRUG_WHITELIST_MN,
-        "lang": "mn",
+        "lang": "zh",
+        "source_type": "media",
+        "core_official": True,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
+    },
+    {
+        "system_id": 4,
+        "system_name": "边境海关缉毒查验体系",
+        "org_name": "内蒙古公安",
+        "org_name_mn": "NMG GAT",
+        "base_url": "http://gat.nmg.110.gov.cn",
+        "seed_paths": ["/"],
+        "lang": "zh",
         "source_type": "official",
         "core_official": True,
-        "priority": 3,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
+    },
+    {
+        "system_id": 7,
+        "system_name": "国际禁毒协作机构",
+        "org_name": "集安组织 CSTO",
+        "org_name_mn": "CSTO",
+        "base_url": "https://www.odkb-csto.org",
+        "seed_paths": ["/"],
+        "lang": "en",
+        "source_type": "official",
+        "core_official": True,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
+    },
+    {
+        "system_id": 7,
+        "system_name": "国际禁毒协作机构",
+        "org_name": "上合组织经合",
+        "org_name_mn": "SCO",
+        "base_url": "https://www.scoec.gov.cn",
+        "seed_paths": ["/"],
+        "lang": "zh",
+        "source_type": "official",
+        "core_official": True,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
+    },
+    {
+        "system_id": 8,
+        "system_name": "全国媒体与公开资讯",
+        "org_name": "UB Post",
+        "org_name_mn": "UB Post",
+        "base_url": "https://ubpost.mongolnews.mn",
+        "seed_paths": ["/"],
+        "lang": "en",
+        "source_type": "media",
+        "core_official": True,
+        "priority": 2,
+        "tier": "secondary",
+        "search_mode_only": True,
     },
 ]
 
-
-def is_forbidden_url(url: str) -> bool:
-    low = (url or "").lower()
-    return any(f in low for f in FORBIDDEN_PATH_FRAGMENTS)
+# 研判备注用 PDF（不爬取）
+REFERENCE_PDFS = [
+    {
+        "title": "UNODC Mongolia Cycle II Country Report",
+        "url": "https://www.unodc.org/documents/treaties/UNCAC/CountryVisitFinalReports/2023_10_26_Mongolia_Cycle_II_Country_Report_EN.pdf",
+    }
+]
 
 
 def build_core_site_search_queries(when: str = "30d") -> List[dict]:
-    """针对真实挂靠域名的 site: 搜索（补官网直采盲区）。"""
+    """关键词检索式任务（Google News site: + 站内搜），仅合法可直连域名。"""
     when_suffix = f" when:{when}" if when else ""
-    drug = (
-        '"хар тамхи" OR "мансууруулах бодис" OR мансууруулах OR narcotics OR '
-        '"drug seizure" OR fentanyl OR methamphetamine OR "illicit drug"'
-    )
-    sites = [
-        ("蒙通社", "montsame.mn", 8, "mn", "mn", "MN:mn"),
-        ("警察总局", "police.gov.mn", 2, "mn", "mn", "MN:mn"),
-        ("政府主站", "mongolia.gov.mn", 1, "mn", "mn", "MN:mn"),
-        ("药品监管局", "mmra.gov.mn", 3, "mn", "mn", "MN:mn"),
-        ("卫生部", "mohs.mn", 3, "mn", "mn", "MN:mn"),
-        ("UNODC", "unodc.org", 7, "en-US", "us", "US:en"),
-        ("边防总局", "bpo.gov.mn", 4, "mn", "mn", "MN:mn"),
-        ("海关电子站", "ecustoms.mn", 4, "mn", "mn", "MN:mn"),
-        ("外交部", "mofa.gov.mn", 7, "mn", "mn", "MN:mn"),
-        ("情报局", "gia.gov.mn", 2, "mn", "mn", "MN:mn"),
-    ]
-    names = {
-        1: "国家级禁毒统筹委员会体系",
-        2: "刑事缉毒执法体系",
-        3: "麻精药品与制毒原料行业监管体系",
-        4: "边境海关缉毒查验体系",
-        7: "国际禁毒协作机构",
-        8: "全国媒体与公开资讯",
-    }
     tasks: List[dict] = []
-    for name, site, sid, hl, gl, ceid in sites:
-        q = f"site:{site} ({drug}){when_suffix}"
-        if site == "unodc.org":
-            q = f"site:unodc.org Mongolia ({drug}){when_suffix}"
+
+    def add_google(name: str, site: str, sid: int, sname: str, query_core: str, hl: str, gl: str, ceid: str, tier: str) -> None:
+        q = f"site:{site} ({query_core}){when_suffix}"
+        if "unodc.org" in site:
+            q = f"site:unodc.org Mongolia ({query_core}){when_suffix}"
         tasks.append({
             "system_id": sid,
-            "system_name": names.get(sid, "官方核心源"),
-            "org_name": f"核心官网搜索·{name}",
+            "system_name": sname,
+            "org_name": f"检索·{name}",
             "query": q,
             "hl": hl,
             "gl": gl,
             "ceid": ceid,
             "engine": "google_news",
-            "require_mongolia": True,
-            "tier": "core_official",
-            "source_kind": "official_site",
+            "require_mongolia": "unodc" not in site.lower() or True,
+            "tier": tier,
+            "source_kind": "keyword_search",
         })
+
+    # 蒙通社三语
+    zh_or = " OR ".join(f'"{k}"' if " " in k else k for k in KW_ZH[:8])
+    en_or = " OR ".join(f'"{k}"' if " " in k else k for k in KW_EN[:8])
+    mn_or = " OR ".join(f'"{k}"' for k in KW_MN[:5])
+    add_google("蒙通社中文", "montsame.mn", 8, "全国媒体与公开资讯", zh_or, "zh-CN", "cn", "CN:zh-Hans", "primary")
+    add_google("蒙通社英文", "montsame.mn", 8, "全国媒体与公开资讯", en_or, "en-US", "us", "US:en", "primary")
+    add_google("蒙通社蒙语", "montsame.mn", 8, "全国媒体与公开资讯", mn_or, "mn", "mn", "MN:mn", "primary")
+
+    # 中国禁毒网 / 中新网 / 内蒙古公安 — 用主题检索（无 site 时也带蒙古）
+    cn_border = '"蒙古国" OR 扎门乌德 OR 甘其毛都 OR 二连浩特 OR "中蒙口岸"'
+    drug_zh = "毒品 OR 缉毒 OR 贩毒 OR 安纳咖 OR 芬太尼"
+    for name, site, sid, sname in [
+        ("中国禁毒网", "nncc626.com", 4, "边境海关缉毒查验体系"),
+        ("中新网", "chinanews.com", 8, "全国媒体与公开资讯"),
+        ("内蒙古公安", "nmg.110.gov.cn", 4, "边境海关缉毒查验体系"),
+    ]:
+        add_google(name, site, sid, sname, f"({cn_border}) ({drug_zh})", "zh-CN", "cn", "CN:zh-Hans", "primary" if "nncc" in site else "secondary")
+
+    add_google("UNODC", "unodc.org", 7, "国际禁毒协作机构", en_or, "en-US", "us", "US:en", "primary")
+    add_google("联合国蒙古办事处", "mongolia.un.org", 7, "国际禁毒协作机构", en_or + " OR drug OR narcotic", "en-US", "us", "US:en", "secondary")
+    add_google("CSTO", "odkb-csto.org", 7, "国际禁毒协作机构", "Mongolia (narcotics OR drug OR operation)", "en-US", "us", "US:en", "secondary")
+    add_google("上合经合", "scoec.gov.cn", 7, "国际禁毒协作机构", "禁毒 OR 毒品 OR Mongolia narcotic", "zh-CN", "cn", "CN:zh-Hans", "secondary")
+    add_google("UB Post", "mongolnews.mn", 8, "全国媒体与公开资讯", en_or, "en-US", "us", "US:en", "secondary")
+
+    # 蒙通社站内搜索（可打开原文）
+    for lang, path, kws in (
+        ("zh", "/cn/search?q={q}", KW_ZH[:6]),
+        ("en", "/en/search?q={q}", KW_EN[:6]),
+        ("mn", "/mn/search?q={q}", KW_MN[:4]),
+    ):
+        for kw in kws:
+            tasks.append({
+                "system_id": 8,
+                "system_name": "全国媒体与公开资讯",
+                "org_name": f"蒙通社站内·{lang}",
+                "query": kw,
+                "hl": lang,
+                "gl": "mn" if lang == "mn" else ("cn" if lang == "zh" else "us"),
+                "ceid": "MN:mn" if lang == "mn" else ("CN:zh-Hans" if lang == "zh" else "US:en"),
+                "engine": "site_search",
+                "search_url": f"https://montsame.mn{path.format(q=quote_plus(kw))}",
+                "require_mongolia": False,
+                "tier": "primary",
+                "source_kind": "site_search",
+            })
+
     return tasks
