@@ -1,1 +1,1 @@
-# 邮件模块初始化
+# emailer package

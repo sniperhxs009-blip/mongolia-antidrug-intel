@@ -1,1 +1,1 @@
-# config包初始化文件
+# config package

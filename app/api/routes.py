@@ -1,37 +1,52 @@
-"""FastAPI 全套接口完整修复代码，无删减"""
+"""FastAPI 路由：情报指挥台、实时进度 SSE、API"""
 from __future__ import annotations
+
 import json
 import threading
 import time
 from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
+
 from app.config import get_settings
-from app.crawler.filters import detect_lang, translate_to_zh
 from app.db.models import CrawlJob, EmailLog, IntelItem, Report, Source, StatRecord, SystemSetting, get_db
 from app.pipeline import run_intel_cycle
 from app.progress import progress_hub
 from app.scheduler.jobs import reschedule_crawl
+
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 settings = get_settings()
 
+
 def _run_cycle_with_progress(run_id: str, report_type: str = "daily", mode: str = "full") -> None:
     from app.db.models import SessionLocal
+
     prog = progress_hub.get(run_id)
     if not prog:
         return
-    def on_event(event_type: str,**kwargs):
-        prog.emit(event_type,**kwargs)
+
+    def on_event(event_type: str, **payload):
+        prog.emit(event_type, **payload)
+
     db = SessionLocal()
     try:
-        run_intel_cycle(db, report_type=report_type, send_email=(mode == "full"), on_event=on_event, mode=mode)
-    except Exception as exc:
+        run_intel_cycle(
+            db,
+            report_type=report_type,
+            send_email=(mode == "full"),
+            on_event=on_event,
+            mode=mode,
+        )
+    except Exception as exc:  # noqa: BLE001
         prog.emit("error", status="failed", phase="失败", message=str(exc))
     finally:
         db.close()
+
 
 @router.get("/", response_class=HTMLResponse)
 def dashboard(request: Request, db: Session = Depends(get_db)):
@@ -40,37 +55,76 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     report_count = db.query(Report).count()
     alert_count = db.query(IntelItem).filter(IntelItem.is_alert.is_(True)).count()
     stat_count = db.query(StatRecord).count()
-    latest_items = db.query(IntelItem).order_by(IntelItem.crawled_at.desc()).limit(30).all()
-    latest_stats = db.query(StatRecord).order_by(StatRecord.crawled_at.desc()).limit(20).all()
+    latest_items = (
+        db.query(IntelItem).order_by(IntelItem.crawled_at.desc()).limit(30).all()
+    )
+    latest_stats = (
+        db.query(StatRecord).order_by(StatRecord.crawled_at.desc()).limit(20).all()
+    )
     latest_reports = db.query(Report).order_by(Report.created_at.desc()).limit(6).all()
     latest_jobs = db.query(CrawlJob).order_by(CrawlJob.started_at.desc()).limit(5).all()
-    systems = db.query(Source.system_id, Source.system_id).distinct().order_by(Source.system_id).all()
-    return templates.TemplateResponse("dashboard.html", locals())
+    systems = (
+        db.query(Source.system_id, Source.system_name)
+        .distinct()
+        .order_by(Source.system_id)
+        .all()
+    )
+    return templates.TemplateResponse(
+        "dashboard.html",
+        {
+            "request": request,
+            "app_name": settings.app_name,
+            "intel_count": intel_count,
+            "source_count": source_count,
+            "report_count": report_count,
+            "alert_count": alert_count,
+            "stat_count": stat_count,
+            "latest_items": latest_items,
+            "latest_stats": latest_stats,
+            "latest_reports": latest_reports,
+            "latest_jobs": latest_jobs,
+            "systems": systems,
+            "crawl_interval": settings.crawl_interval,
+            "email_configured": bool(settings.smtp_user and settings.smtp_password and settings.email_to),
+            "now": datetime.utcnow(),
+        },
+    )
+
 
 @router.get("/api/health")
 def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat(), "app": settings.app_name}
 
+
 @router.get("/api/self-check")
 def self_check(db: Session = Depends(get_db)):
+    """全量修复版自检报告。"""
     from config.core_official import (
-        CORE_OFFICIAL_SOURCES, FORBIDDEN_HOSTS, FORBIDDEN_PATH_FRAGMENTS,
-        KW_EN, KW_MN, KW_ZH, TOPIC_BLACKLIST, is_forbidden_url, build_core_site_search_queries,
+        CORE_OFFICIAL_SOURCES,
+        FORBIDDEN_HOSTS,
+        FORBIDDEN_PATH_FRAGMENTS,
+        KW_EN,
+        KW_MN,
+        KW_ZH,
+        TOPIC_BLACKLIST,
+        build_core_site_search_queries,
+        is_forbidden_url,
     )
     from config.drug_lexicon import all_drug_keywords
+
     samples = [
         "https://zasag.mn/anti-narcotics",
-        "https://unodc.org/mongolia/",
+        "https://www.unodc.org/mongolia/",
         "https://police.gov.mn/",
+        "https://customs.gov.mn/",
+        "https://health.gov.mn/drug-control",
+        "https://shturl.cc/x",
         "https://montsame.mn/cn",
-        "https://gogo.mn/search?q=хар тамхи",
-        "https://ubpost.mongolnews.mn",
-        "https://ikon.mn",
-        "https://news.mn"
+        "https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html",
     ]
     blocked = [u for u in samples if is_forbidden_url(u)]
     allowed = [u for u in samples if not is_forbidden_url(u)]
-    tasks = build_core_site_search_queries("1y")
+    tasks = build_core_site_search_queries(settings.news_when)
     intel_n = db.query(IntelItem).count()
     return {
         "status": "ok",
@@ -91,27 +145,30 @@ def self_check(db: Session = Depends(get_db)):
                 "blacklist_blocks_gov_mn": is_forbidden_url("https://police.gov.mn/news"),
                 "no_anti_narcotics_path": is_forbidden_url("https://example.com/anti-narcotics"),
                 "montsame_allowed": not is_forbidden_url("https://montsame.mn/cn"),
-                "gogo_mn_allowed": not is_forbidden_url("https://gogo.mn"),
-                "unodc_wdr_allowed": not is_forbidden_url("https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html"),
+                "unodc_wdr_allowed": not is_forbidden_url(
+                    "https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html"
+                ),
             },
             "ready_for_scheduled_crawl": all(
                 [
                     is_forbidden_url("https://police.gov.mn/news"),
                     is_forbidden_url("https://zasag.mn/anti-narcotics"),
-                    not is_forbidden_url("https://montsame.mn"),
-                    not is_forbidden_url("https://gogo.mn"),
+                    not is_forbidden_url("https://montsame.mn/cn"),
                     bool(getattr(settings, "crawl_forbid_proxy", True)),
-                    bool(settings.enable_official_crawl),
-                    len(CORE_OFFICIAL_SOURCES) >= 12,
+                    not bool(settings.enable_official_crawl),
+                    len(CORE_OFFICIAL_SOURCES) >= 8,
                 ]
             ),
         },
     }
 
+
 @router.get("/api/trend-30d")
 def trend_30d(db: Session = Depends(get_db)):
     from app.analysis.engine import AnalysisEngine
+
     return AnalysisEngine(db).trend_compare_30d()
+
 
 @router.get("/api/stats")
 def stats(db: Session = Depends(get_db)):
@@ -119,15 +176,21 @@ def stats(db: Session = Depends(get_db)):
         "intel_items": db.query(IntelItem).count(),
         "sources": db.query(Source).count(),
         "reports": db.query(Report).count(),
-        "alerts": db.query(IntelItem).count(),
+        "alerts": db.query(IntelItem).filter(IntelItem.is_alert.is_(True)).count(),
         "stat_records": db.query(StatRecord).count(),
         "jobs": db.query(CrawlJob).count(),
         "emails": db.query(EmailLog).count(),
     }
 
+
 @router.get("/api/stat-records")
 def list_stat_records(db: Session = Depends(get_db), limit: int = 50):
-    rows = db.query(StatRecord).order_by(StatRecord.crawled_at.desc()).limit(min(limit,200)).all()
+    rows = (
+        db.query(StatRecord)
+        .order_by(StatRecord.crawled_at.desc())
+        .limit(min(limit, 200))
+        .all()
+    )
     return [
         {
             "id": r.id,
@@ -146,6 +209,7 @@ def list_stat_records(db: Session = Depends(get_db), limit: int = 50):
         for r in rows
     ]
 
+
 @router.get("/api/intel")
 def list_intel(
     db: Session = Depends(get_db),
@@ -160,9 +224,16 @@ def list_intel(
     if alert_only:
         q = q.filter(IntelItem.is_alert.is_(True))
     if since_id:
-        rows = db.query(IntelItem).filter(IntelItem.id > since_id).order_by(IntelItem.id.asc()).limit(min(limit,200)).all()
+        # 增量拉取：只返回比 since_id 更新的条目（按 id 升序便于前端追加）
+        rows = (
+            db.query(IntelItem)
+            .filter(IntelItem.id > since_id)
+            .order_by(IntelItem.id.asc())
+            .limit(min(limit, 200))
+            .all()
+        )
     else:
-        rows = q.limit(min(limit,200)).all()
+        rows = q.limit(min(limit, 200)).all()
     return [
         {
             "id": r.id,
@@ -178,6 +249,7 @@ def list_intel(
         }
         for r in rows
     ]
+
 
 @router.get("/api/sources")
 def list_sources(db: Session = Depends(get_db)):
@@ -198,6 +270,7 @@ def list_sources(db: Session = Depends(get_db)):
         for s in rows
     ]
 
+
 @router.get("/api/reports")
 def list_reports(db: Session = Depends(get_db), limit: int = 20):
     rows = db.query(Report).order_by(Report.created_at.desc()).limit(limit).all()
@@ -213,6 +286,7 @@ def list_reports(db: Session = Depends(get_db), limit: int = 20):
         for r in rows
     ]
 
+
 @router.get("/api/reports/{report_id}")
 def get_report(report_id: int, db: Session = Depends(get_db)):
     r = db.query(Report).filter(Report.id == report_id).first()
@@ -227,11 +301,15 @@ def get_report(report_id: int, db: Session = Depends(get_db)):
         "created_at": r.created_at.isoformat() if r.created_at else None,
     }
 
+
 @router.post("/api/intel/purge")
 def purge_intel(db: Session = Depends(get_db)):
+    """清理非蒙古国或非涉毒的脏数据。"""
     from app.crawler.cleanup import purge_irrelevant_items
+
     result = purge_irrelevant_items(db)
     return {"status": "ok", **result}
+
 
 @router.get("/api/crawl/status")
 def crawl_status(run_id: Optional[str] = None):
@@ -239,28 +317,41 @@ def crawl_status(run_id: Optional[str] = None):
     if not prog:
         return {"status": "idle", "busy": False}
     snap = prog.snapshot()
-    snap["busy"] = bool(prog.status in ("queued", "running", "analyzing", "emailing"))
+    snap["busy"] = prog.status in ("queued", "running", "analyzing", "emailing")
     return snap
+
 
 @router.post("/api/crawl/run")
 def trigger_crawl(report_type: str = "daily", mode: str = "full"):
+    """mode=news：仅抓最新新闻（快）；mode=full：新闻+研判报告。"""
     if mode not in ("news", "full"):
         mode = "full"
     if progress_hub.is_busy():
         cur = progress_hub.current()
-        return JSONResponse({
-            "status": "busy",
-            "message": "已有巡检任务正在执行",
-            "run_id": cur.run_id if cur else None,
-            "progress": cur.snapshot() if cur else None,
-        }, status_code=409)
+        return JSONResponse(
+            {
+                "status": "busy",
+                "message": "已有巡检任务正在执行",
+                "run_id": cur.run_id if cur else None,
+                "progress": cur.snapshot() if cur else None,
+            },
+            status_code=409,
+        )
     prog = progress_hub.create(report_type=report_type)
-    t = threading.Thread(target=_run_cycle_with_progress, args=(prog.run_id, report_type, mode), daemon=True)
+    t = threading.Thread(
+        target=_run_cycle_with_progress,
+        args=(prog.run_id, report_type, mode),
+        daemon=True,
+        name=f"crawl-{prog.run_id}",
+    )
     t.start()
     return {"status": "started", "report_type": report_type, "mode": mode, "run_id": prog.run_id}
 
+
 @router.get("/api/crawl/stream")
 def crawl_stream(run_id: Optional[str] = None):
+    """SSE：实时推送巡检进度与逐条情报事件。"""
+
     def event_generator():
         last_len = 0
         idle_ticks = 0
@@ -269,61 +360,55 @@ def crawl_stream(run_id: Optional[str] = None):
             if not prog:
                 yield f"data: {json.dumps({'type': 'idle', 'message': '无活动任务'}, ensure_ascii=False)}\n\n"
                 break
+
             snap = prog.snapshot()
             events = snap.get("events") or []
             if len(events) > last_len:
                 for evt in events[last_len:]:
-                    payload = {
-                        "type": "event",
-                        "event": evt,
-                        "progress": {
-                            "run_id": snap["run_id"],
-                            "status": snap["status"],
-                            "phase": snap["phase"],
-                            "message": snap["message"],
-                            "percent": snap["percent"],
-                            "total_sources": snap["total_sources"],
-                            "current_index": snap["current_index"],
-                            "pages_fetched": snap["pages_fetched"],
-                            "items_new": snap["items_new"],
-                            "items_updated": snap["items_updated"],
-                            "items_filtered": snap["items_filtered"],
-                            "error_count": snap["error_count"],
-                            "current_org": snap["current_org"],
-                            "current_url": snap["current_url"],
-                            "report_id": snap["report_id"],
-                        }
-                    }
+                    payload = {"type": "event", "event": evt, "progress": {
+                        k: snap[k] for k in (
+                            "run_id", "status", "phase", "message", "percent",
+                            "total_sources", "current_index", "pages_fetched",
+                            "items_new", "items_updated", "items_filtered",
+                            "error_count", "current_org", "current_url", "report_id",
+                        )
+                    }}
                     yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 last_len = len(events)
                 idle_ticks = 0
             else:
+                # 心跳，保持连接
                 heartbeat = {
                     "type": "heartbeat",
                     "progress": {
                         "status": snap["status"],
                         "phase": snap["phase"],
-                        "message": snap["message"],
                         "percent": snap["percent"],
+                        "message": snap["message"],
                         "current_org": snap["current_org"],
-                        "pages_fetched": snap["pages_fetched"],
                         "items_new": snap["items_new"],
-                        "items_updated": snap["items_updated"],
-                        "error_count": snap["error_count"],
+                        "pages_fetched": snap["pages_fetched"],
                         "report_id": snap["report_id"],
-                    }
+                    },
                 }
                 yield f"data: {json.dumps(heartbeat, ensure_ascii=False)}\n\n"
                 idle_ticks += 1
+
             if snap["status"] in ("success", "failed") and idle_ticks >= 2:
                 yield f"data: {json.dumps({'type': 'closed', 'progress': snap}, ensure_ascii=False)}\n\n"
                 break
             time.sleep(0.6)
-    return StreamingResponse(event_generator(), media_type="text/event-stream", headers={
-        "Cache-Control": "no-cache",
-        "Connection": "keep-alive",
-        "X-Accel-Buffering": "no",
-    })
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 
 @router.post("/api/schedule")
 def update_schedule(interval: str = Form(...)):
@@ -331,6 +416,7 @@ def update_schedule(interval: str = Form(...)):
         return JSONResponse({"error": "invalid interval"}, status_code=400)
     reschedule_crawl(interval)
     from app.db.models import SessionLocal
+
     db = SessionLocal()
     try:
         row = db.query(SystemSetting).filter(SystemSetting.key == "crawl_interval").first()
@@ -343,14 +429,22 @@ def update_schedule(interval: str = Form(...)):
         db.close()
     return RedirectResponse(url="/", status_code=303)
 
+
 @router.get("/reports/{report_id}", response_class=HTMLResponse)
-def report_page(request: Request, report_id: int, db: Session = Depends(get_db)):
+def report_page(report_id: int, request: Request, db: Session = Depends(get_db)):
     r = db.query(Report).filter(Report.id == report_id).first()
     if not r:
         return HTMLResponse("报告不存在", status_code=404)
-    return templates.TemplateResponse("report.html", {"request": request, "report": r, "app_name": settings.app_name})
+    return templates.TemplateResponse(
+        "report.html",
+        {"request": request, "report": r, "app_name": settings.app_name},
+    )
+
 
 @router.get("/sources", response_class=HTMLResponse)
 def sources_page(request: Request, db: Session = Depends(get_db)):
     rows = db.query(Source).order_by(Source.system_id, Source.id).all()
-    return templates.TemplateResponse("sources.html", {"request": request, "sources": rows, "app_name": settings.app_name})
+    return templates.TemplateResponse(
+        "sources.html",
+        {"request": request, "sources": rows, "app_name": settings.app_name},
+    )

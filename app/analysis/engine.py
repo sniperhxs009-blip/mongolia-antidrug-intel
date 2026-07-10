@@ -1,16 +1,22 @@
-"""专业级情报交叉研判分析引擎【修复：放宽地域匹配、扩充媒体归类】"""
+"""专业级情报交叉研判分析引擎"""
 from __future__ import annotations
+
 import logging
 import re
 from collections import Counter, defaultdict
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
+
 from sqlalchemy.orm import Session
+
 from app.config import get_settings
 from app.crawler.filters import detect_lang, translate_to_zh
 from app.db.models import IntelItem, Report
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+
 SYSTEM_ORDER = [
     (1, "国家级禁毒统筹委员会体系"),
     (2, "刑事缉毒执法体系"),
@@ -24,7 +30,8 @@ SYSTEM_ORDER = [
     (10, "全球媒体与国际禁毒机构"),
     (11, "全球论坛社区与补充搜索"),
 ]
-# 扩充蒙古媒体中文映射
+
+# 机构/来源名中文映射（报告展示用）
 ORG_NAME_ZH = {
     "UNODC": "联合国毒品和犯罪问题办公室",
     "INCB": "国际麻醉品管制局",
@@ -48,29 +55,37 @@ ORG_NAME_ZH = {
     "RIA Novosti": "俄新社",
     "VICE": "VICE新闻",
     "AKIpress": "AKIpress新闻社",
-    "GoGo 新闻": "GoGo.mn蒙古本地媒体",
-    "IKON 新闻": "IKON.mn蒙古本地媒体",
-    "News.mn": "News.mn本土新闻门户",
+    "GoGo 新闻": "GoGo新闻",
+    "IKON 新闻": "IKON新闻",
+    "News.mn": "News.mn",
     "UB Post": "乌兰巴托邮报",
     "蒙通社 MONTSAME": "蒙通社",
 }
+
+
 class AnalysisEngine:
+    """多源交叉比对、关联研判、趋势分析、风险研判。"""
+
     def __init__(self, db: Session):
         self.db = db
         self._zh_cache: Dict[str, str] = {}
-    def collect_items(self, days: int = 365) -> List[IntelItem]:
-        """默认读取1年数据"""
+
+    def collect_items(self, days: int = 7) -> List[IntelItem]:
         since = datetime.utcnow() - timedelta(days=days)
         return (
             self.db.query(IntelItem)
+            .filter(IntelItem.crawled_at >= since)
             .filter(IntelItem.is_duplicate.is_(False))
             .order_by(IntelItem.crawled_at.desc())
             .all()
         )
+
     @staticmethod
     def _has_cjk(text: str) -> bool:
         return bool(re.search(r"[\u4e00-\u9fff]", text or ""))
+
     def _to_zh(self, text: str) -> str:
+        """报告内强制中文：已是中文则保留，否则翻译。"""
         text = (text or "").strip()
         if not text:
             return text
@@ -79,13 +94,15 @@ class AnalysisEngine:
         if self._has_cjk(text) and detect_lang(text) == "zh":
             self._zh_cache[text] = text
             return text
+        # 标题里中英混排且已有足够中文，直接用
         if self._has_cjk(text) and len(re.findall(r"[\u4e00-\u9fff]", text)) >= max(4, len(text) // 4):
             self._zh_cache[text] = text
             return text
         zh = translate_to_zh(text, enabled=True)
+        # 翻译失败则尽量做轻量替换
         if not zh or zh == text:
             zh = text
-            replace_map = [
+            for en, cn in (
                 ("Mongolia", "蒙古国"),
                 ("Ulaanbaatar", "乌兰巴托"),
                 ("drug", "毒品"),
@@ -100,11 +117,11 @@ class AnalysisEngine:
                 ("seizure", "查获"),
                 ("trafficking", "贩运"),
                 ("smuggling", "走私"),
-            ]
-            for en, cn in replace_map:
+            ):
                 zh = re.sub(re.escape(en), cn, zh, flags=re.I)
         self._zh_cache[text] = zh
         return zh
+
     def _org_zh(self, org_name: str) -> str:
         org = (org_name or "").strip()
         if not org:
@@ -114,32 +131,41 @@ class AnalysisEngine:
         for k, v in ORG_NAME_ZH.items():
             if k.lower() in org.lower() or org.lower() in k.lower():
                 return v
-        if org.startswith("搜索·") or org.startswith("国际") or org.startswith("论坛") or org.startswith("统计"):
+        # 搜索任务名：搜索·英语·xxx → 保留结构并译后缀
+        if org.startswith("搜索·") or org.startswith("国际") or org.startswith("全球") or org.startswith("统计"):
             return self._to_zh(org) if not self._has_cjk(org) else org
         if self._has_cjk(org):
             return org
         return self._to_zh(org)
+
     def _item_title_zh(self, item: IntelItem) -> str:
+        # 优先已有中文标题；否则强制翻译原文标题
         if item.title_zh and self._has_cjk(item.title_zh):
             return item.title_zh.strip()
-        raw = (item.title or "").strip()
+        raw = (item.title_zh or item.title or "").strip()
         return self._to_zh(raw)
+
     def generate_report(self, report_type: str = "daily", days: Optional[int] = None) -> Report:
-        days = days or {"daily": 30, "weekly": 7, "monthly": 365, "alert": 1}.get(report_type, 365)
+        # 日度/月度均按近30日官方归集窗口（与文档一致）；周报7日；告警1日
+        days = days or {"daily": 30, "weekly": 7, "monthly": 30, "alert": 1}.get(report_type, 30)
         items = self.collect_items(days=days)
         period_end = datetime.utcnow()
-        period_start = period_end - timedelta(days)
+        period_start = period_end - timedelta(days=days)
+
         md = self._build_markdown(items, report_type, period_start, period_end)
         html = self._md_to_simple_html(md)
         title = (
             f"蒙古国禁毒全机构近{days}日涉毒情报归集报告 "
             f"{period_start.strftime('%Y.%m.%d')}-{period_end.strftime('%Y.%m.%d')}"
         )
+
         import os
+
         os.makedirs(settings.reports_dir, exist_ok=True)
         path = f"{settings.reports_dir}/report_{report_type}_{period_end.strftime('%Y%m%d_%H%M%S')}.md"
         with open(path, "w", encoding="utf-8") as f:
             f.write(md)
+
         report = Report(
             report_type=report_type,
             title=title,
@@ -156,27 +182,35 @@ class AnalysisEngine:
         self.db.refresh(report)
         logger.info("研判报告已生成: %s", path)
         return report
+
     def _type_label(self, report_type: str) -> str:
-        return {"daily": "日度", "weekly": "周度", "monthly": "年度全量归集", "alert": "紧急通报"}.get(report_type, report_type)
+        return {"daily": "日度", "weekly": "周度", "monthly": "月度", "alert": "紧急通报"}.get(
+            report_type, report_type
+        )
+
     def _item_core(self, item: IntelItem) -> str:
-        raw = (item.summary_zh or item.summary or item.content or "").strip()
+        raw = (item.summary_zh or item.summary or item.content_zh or item.content or "").strip()
+        if not raw:
+            return self._item_title_zh(item)
         zh = self._to_zh(raw)
-        return zh[:320] + ("…" if len(zh) > 320 else "")
+        return zh[:280] + ("…" if len(zh) > 280 else "")
+
     def _item_judgment(self, item: IntelItem) -> str:
         cat = item.category or "综合"
         level = item.intel_level or "一般"
         hints = []
-        if self._match(item, ["口岸", "边境", "хил", "гааль", "border", "customs", "扎门", "甘其毛都"]):
-            hints.append("关注中蒙口岸、戈壁徒步走私通道变化")
-        if self._match(item, ["合成", "芬太尼", "尼秦", "synthetic", "NPS", "meth"]):
-            hints.append("新型合成阿片类毒品致死风险持续抬升")
-        if self._match(item, ["青少年", "校园", "音乐节", "playtime"]):
-            hints.append("青年聚集场所防毒管控压力上升")
-        if self._match(item, ["UNODC", "集安", "CSTO", "联合行动"]):
-            hints.append("跨境多国禁毒协作信号需跟踪")
+        if self._match(item, ["口岸", "边境", "хил", "гааль", "border", "customs", "扎门", "嘎顺"]):
+            hints.append("关注中蒙口岸/无人区走私通道变化")
+        if self._match(item, ["合成", "芬太尼", "尼秦", "synthetic", "NPS", "meth", "изотонитазен"]):
+            hints.append("新型合成毒品/高致死阿片风险抬升")
+        if self._match(item, ["青少年", "校园", "音乐节", "playtime", "13-25"]):
+            hints.append("年轻群体聚集场景防毒压力上升")
+        if self._match(item, ["UNODC", "集安", "CSTO", "联合行动", "跨境"]):
+            hints.append("跨境联合行动与国际协作信号")
         if not hints:
-            hints.append(f"纳入「{cat}」主题持续监测，情报等级：{level}")
+            hints.append(f"纳入「{cat}」主题持续跟踪，等级：{level}")
         return "；".join(hints[:2])
+
     def _build_markdown(
         self,
         items: List[IntelItem],
@@ -193,46 +227,67 @@ class AnalysisEngine:
             by_system[it.system_id or 0].append(it)
             by_category[it.category or "综合"] += 1
             by_level[it.intel_level or "一般"] += 1
-            by_org[self._org_zh(it)] += 1
+            by_org[self._org_zh(it.org_name)] += 1
             if it.is_alert or it.intel_level in ("紧急", "重要"):
                 alerts.append(it)
+
+        # 七大模块（文档顺序）；媒体/统计/全球源并入对应研判，不单独成章喧宾夺主
         MODULES = [
-            (1, "一、国家级禁毒统筹委员会 近期官方情报", "国家级统筹"),
+            (1, "一、国家级统筹协调委员会 近期官方情报", "国家级统筹"),
             (2, "二、核心刑事缉毒执法机构 近一月案件&通告", "执法缉毒"),
-            (3, "三、药品/制毒原料行业管控公告", "行业监管"),
+            (3, "三、药品/制毒原料行业监管行政单位 管控公告", "行业监管"),
             (4, "四、海关、边境边防禁毒查验单位 口岸缉毒动态", "边境口岸"),
             (5, "五、地方层级禁毒配套机构（21省+乌兰巴托9区）", "地方机构"),
             (6, "六、戒毒、成瘾治疗专门医疗机构 康复数据", "戒毒康复"),
             (7, "七、国际禁毒协作相关常驻机构 涉外动态", "国际协作"),
         ]
+
         lines: List[str] = []
         lines.append(
-            f"# 蒙古国禁毒全机构近{(period_end - period_start).days}日（{period_start.strftime('%Y.%m.%d')}-{period_end.strftime('%Y.%m.%d')}）涉毒情报归集报告"
+            f"# 蒙古国禁毒全机构近{(period_end - period_start).days}日"
+            f"（{period_start.strftime('%Y.%m.%d')}-{period_end.strftime('%Y.%m.%d')}）涉毒情报归集报告"
         )
         lines.append("")
-        lines.append("## 情报说明【修复后采集规则】")
-        lines.append("1. 数据源扩充：蒙通社、GOGO/IKON/NEWS.MN、UB Post蒙古本土媒体、中国禁毒网、UNODC，全部国内裸网直连。")
-        lines.append("2. 时效窗口1年，适配蒙古国官方禁毒新闻更新频次极低的现状。")
-        lines.append("3. 过滤规则放宽：蒙古媒体页面无需文本含蒙古字样即可入库；外媒纯毒品报道保留研判。")
-        lines.append(f"4. 本期有效情报 {len(items)} 条；告警/重要 {len(alerts)} 条；等级分布 {dict(by_level)}。")
+        lines.append("## 情报说明")
         lines.append("")
+        lines.append(
+            "1. **数据源严格限定**：蒙通社 Montsame、中国禁毒网、UNODC 全球官网、"
+            "联合国蒙古办事处、中新网、内蒙古公安、CSTO、上合经合、UB Post 等国内裸网可直连公开源；"
+            "禁止访问蒙古本土 `.gov.mn` 及虚构专栏路径；采用关键词检索式增量采集。"
+        )
+        lines.append(
+            "2. **时效与过滤**：优先近30日官方发布；剔除自媒体爆料、体育兴奋剂、"
+            "非管制医药及历史过期资讯。"
+        )
+        lines.append(
+            "3. **归集结构**：按「国家级统筹→执法缉毒→行业监管→边境口岸→地方机构→戒毒康复→国际协作」"
+            "七大模块依次归集；每条标注发布机构、发布时间、核心内容、研判要点、原文链接。"
+        )
+        lines.append(
+            f"4. **本周期统计**：有效情报 **{len(items)}** 条；告警/重要 **{len(alerts)}** 条；"
+            f"等级分布 {dict(by_level)}。"
+        )
+        lines.append("")
+
+        # 将 system 8/9/10/11 的条目按主题并入七大模块，避免官方归集报告被搜索噪声冲淡
         def _bucket(it: IntelItem) -> int:
             sid = it.system_id or 0
             if sid in (1, 2, 3, 4, 5, 6, 7):
                 return sid
-            if self._match(it, ["海关", "口岸", "гааль", "хил"]):
+            if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border"]):
                 return 4
-            if self._match(it, ["戒毒", "康复", "донтсон", "сэргээх"]):
+            if self._match(it, ["戒毒", "康复", "成瘾", "донтсон", "сэргээх", "rehab"]):
                 return 6
-            if self._match(it, ["UNODC", "国际", "外交"]):
+            if self._match(it, ["UNODC", "国际", "外交", "олон улсын", "INTERPOL", "INCB"]):
                 return 7
-            if self._match(it, ["麻精", "卫生"]):
+            if self._match(it, ["麻精", "处方", "卫生", "прекурсор", "health", "moh"]):
                 return 3
-            if self._match(it, ["警察", "缉毒"]):
+            if self._match(it, ["警察", "检察院", "缉毒", "цагдаа", "баривчилгаа", "prosecutor"]):
                 return 2
-            if self._match(it, ["委员会", "政府"]):
+            if self._match(it, ["委员会", "政府", "zasag", "gov.mn", "协调"]):
                 return 1
-            return 8
+            return 8  # 暂存未归类
+
         module_items: Dict[int, List[IntelItem]] = defaultdict(list)
         uncategorized: List[IntelItem] = []
         for it in items:
@@ -241,8 +296,10 @@ class AnalysisEngine:
                 uncategorized.append(it)
             else:
                 module_items[b].append(it)
+
         for sid, heading, _label in MODULES:
-            group = module_items.get(sid, [])
+            group = module_items.get(sid, []) or by_system.get(sid, [])
+            # 去重
             seen = set()
             uniq = []
             for g in group:
@@ -254,7 +311,7 @@ class AnalysisEngine:
             lines.append(f"## {heading}")
             lines.append("")
             if not group:
-                lines.append("- 本周期该体系无新增可核验官方情报。")
+                lines.append("- 本周期该模块公开渠道未见新增可结构化涉毒官方情报。")
                 lines.append("")
                 continue
             for idx, g in enumerate(group[:12], 1):
@@ -270,78 +327,127 @@ class AnalysisEngine:
                 lines.append(f"- **研判要点**：{self._item_judgment(g)}")
                 lines.append(f"- **原文来源**：{g.url or '（无链接）'}")
                 lines.append("")
+
         if uncategorized:
-            lines.append("## 附、蒙古本土媒体/国际外媒补充涉毒资讯")
+            lines.append("## 附、其他公开渠道涉蒙涉毒信息（已过滤）")
             lines.append("")
-            for g in uncategorized[:12]:
-                lines.append(f"- 【{g.intel_level}】{self._item_title_zh(g)}｜{self._org_zh(g)}｜{g.url}")
+            for g in uncategorized[:8]:
+                lines.append(
+                    f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                    f"{self._org_zh(g.org_name)}｜{g.url}"
+                )
             lines.append("")
+
+        # 综合交叉研判（文档第八节）
         lines.append("## 八、综合情报交叉研判总结")
         lines.append("")
-        cross = [i for i in items if self._match(i, ["口岸", "边境"])]
-        novel = [i for i in items if self._match(i, ["芬太尼", "尼秦", "合成"])]
-        youth = [i for i in items if self._match(i, ["青少年", "校园"])]
-        lines.append(f"1. 中蒙跨境口岸相关情报 {len(cross)} 条，徒步、货车走私为主要渠道。")
-        lines.append(f"2. 新型合成毒品相关资讯 {len(novel)} 条，阿片类中毒风险走高。")
-        lines.append(f"3. 青少年涉毒公开信息 {len(youth)}，文娱场所管控需持续关注。")
+        cross = [i for i in items if self._match(i, ["口岸", "边境", "хил", "гааль", "border", "customs"])]
+        novel = [i for i in items if self._match(i, ["合成", "芬太尼", "尼秦", "synthetic", "NPS", "meth"])]
+        youth = [i for i in items if self._match(i, ["青少年", "校园", "音乐节", "playtime"])]
+        lines.append(
+            f"1. **毒情品类趋势**：本周期新型/合成相关公开信息 {len(novel)} 条；"
+            "传统大麻/安纳咖与合成毒品并存时，优先跟踪城市与口岸高致死阿片、合成大麻素信号。"
+        )
+        lines.append(
+            f"2. **执法管控重心**：跨境/口岸相关 {len(cross)} 条；"
+            "关注主口岸严查与戈壁无人小路 divert 风险，以及空港/文娱场所安检通报。"
+        )
+        lines.append(
+            "3. **中蒙跨境风险预警**：对扎门乌德、嘎顺苏海图及东/南戈壁方向公开查获、"
+            "双边情报交换类信息提高监测优先级。"
+        )
+        lines.append(
+            f"4. **短板隐患**：年轻群体相关公开信息 {len(youth)} 条；"
+            "校园、音乐节等场景与基层新型毒品快检覆盖仍是持续关注点。"
+        )
         lines.append("")
         lines.append(self._risk_outlook(items, by_category, alerts))
+        lines.append("")
+
         lines.append("## 九、下期重点监测方向")
-        lines.append("1. 蒙通社、GOGO/IKON/NEWS.MN、UB Post全渠道1年检索。")
-        lines.append("2. 甘其毛都、扎门乌德口岸缉毒公开案件。")
-        lines.append("3. UNODC全球毒情报告、集安组织跨境行动。")
-        lines.append("4. 安纳咖、芬太尼、尼秦类毒品报道。")
-        lines.append("5. 公斤级查获自动触发即时邮件告警。")
+        lines.append("")
+        lines.append("1. 蒙通社三语站、中国禁毒网、UNODC 世界毒品报告近30日涉蒙公开通报。")
+        lines.append("2. 中新网/内蒙古公安涉中蒙口岸缉毒社会与属地官方报道。")
+        lines.append("3. CSTO、上合经合、联合国蒙古办事处涉外禁毒协作动态。")
+        lines.append("4. 近30日毒品品类、走私渠道、涉案人群趋势对比（见下节）。")
+        lines.append("5. 大宗缉毒案、新法列管、跨境联合行动、高致死新型毒品预警 → 触发即时邮件。")
         lines.append("")
         lines.append(self._trend_30d_section(items))
+        lines.append("")
         lines.append("---")
-        lines.append("*本报告自动生成，数据源全部国内可直连公开媒体，无翻墙采集内容。*")
+        lines.append(
+            "*本报告由蒙古国禁毒全网情报自动采集研判系统自动生成；"
+            "仅基于官方及授权公开渠道，不采信自媒体爆料。*"
+        )
         return "\n".join(lines)
+
     def trend_compare_30d(self, items: Optional[List[IntelItem]] = None) -> dict:
-        items = items if items is not None else self.collect_items(30)
+        """近30日毒品品类、走私渠道、涉案人群简易趋势对比。"""
+        items = items if items is not None else self.collect_items(days=30)
         mid = datetime.utcnow() - timedelta(days=15)
+
+        def _bucket_period(it: IntelItem) -> str:
+            ts = it.published_at or it.crawled_at or datetime.utcnow()
+            return "recent15" if ts >= mid else "prior15"
+
         dims = {
-            "品类_合成/芬太尼": ["芬太尼", "尼秦", "合成"],
-            "品类_传统大麻/安纳咖": ["大麻", "安纳咖", "海洛因"],
-            "渠道_口岸跨境": ["口岸", "边境"],
-            "渠道_城市黑市": ["黑市", "青少年"],
-            "人群_青少年": ["青少年", "学生"],
-            "大宗查获": ["公斤", "吨"],
+            "品类_合成/芬太尼/尼秦": ["芬太尼", "尼秦", "合成", "fentanyl", "nitazene", "synthetic", "NPS"],
+            "品类_传统大麻/海洛因/冰毒": ["大麻", "海洛因", "冰毒", "cannabis", "heroin", "meth"],
+            "渠道_口岸/跨境": ["口岸", "边境", "跨境", "customs", "border", "хил", "гааль"],
+            "渠道_城市黑市": ["黑市", "青少年", "校园", "音乐节", "playtime", "ub post"],
+            "人群_青少年": ["青少年", "校园", "学生", "youth", "school"],
+            "人群_跨境走私": ["走私", "trafficking", "smuggl", "баривчилгаа"],
         }
-        out = {}
-        for name, kws in dims.items():
-            a = sum(1 for i in items if (i.published_at or i.crawled_at) < mid and self._match(i, kws))
-            b = sum(1 for i in items if (i.published_at or i.crawled_at) >= mid and self._match(i, kws))
+        out: Dict[str, dict] = {}
+        for name, keys in dims.items():
+            a = sum(1 for it in items if _bucket_period(it) == "prior15" and self._match(it, keys))
+            b = sum(1 for it in items if _bucket_period(it) == "recent15" and self._match(it, keys))
             delta = b - a
-            out[name] = {"前15日": a, "近15日": b, "差值": delta}
+            out[name] = {"prior_15d": a, "recent_15d": b, "delta": delta}
         return {
             "window_days": 30,
             "total_items": len(items),
             "dimensions": out,
         }
+
     def _trend_30d_section(self, items: List[IntelItem]) -> str:
-        lines = ["## 十、近30日情报趋势对比（前15日VS近15日）", ""]
         data = self.trend_compare_30d(items)
+        lines = ["## 十、近30日趋势对比（前15日 vs 近15日）", ""]
         if not items:
-            lines.append("- 暂无有效情报，建议执行1年窗口全量巡检。")
+            lines.append("- 本周期无有效情报，趋势对比暂缺。")
             return "\n".join(lines)
         for name, row in data["dimensions"].items():
             arrow = "↑" if row["delta"] > 0 else ("↓" if row["delta"] < 0 else "→")
-            lines.append(f"- {name}：前15日 {row['前15日']} 条 → 近15日 {row['近15日']} （{arrow}{abs(row['差值'])}）")
+            lines.append(
+                f"- **{name}**：前15日 {row['prior_15d']} → 近15日 {row['recent_15d']} "
+                f"（{arrow}{abs(row['delta'])}）"
+            )
         lines.append("")
-        lines.append("注：仅代表媒体披露数量，不等于实际案发总量。")
+        lines.append(
+            f"*样本总量 {data['total_items']} 条；仅反映公开渠道披露密度变化，不作绝对案发量推断。*"
+        )
         return "\n".join(lines)
+
     def _risk_outlook(self, items: List[IntelItem], by_category: Counter, alerts: list) -> str:
+        if not items:
+            return (
+                "趋势预判：公开信息静默不等于风险消失。建议保持每日/每12小时巡检，"
+                "对口岸、缉毒执法、管制药品三类栏目设置更高优先级。"
+            )
         parts = []
         if alerts:
-            parts.append(f"系统识别{len(alerts)}条重要/紧急线索，优先核验原文。")
+            parts.append(f"已识别告警/重要线索 {len(alerts)} 条，需优先核验并视情启动即时邮件推送闭环。")
         if by_category.get("跨境毒情", 0) >= 2:
-            parts.append("口岸走私报道增多，边境货运、徒步通道风险抬升。")
-        if by_category.get("新型毒品", 0):
-            parts.append("合成阿片类案件持续披露，需长期跟踪流通渠道。")
+            parts.append("跨境/口岸信息密度上升，预判口岸查验与货运高峰叠加期风险抬升。")
+        if by_category.get("新型毒品", 0) or by_category.get("制毒原料", 0):
+            parts.append("出现新型毒品或制毒原料监管信号，建议开展专题跟踪并比对历史管制变化。")
+        if by_category.get("执法行动", 0) >= 3:
+            parts.append("执法行动类信息公开增多，反映阶段性专项整治或案件集中披露可能。")
         if not parts:
-            parts.append("整体资讯平稳，持续监测蒙古本土媒体补充线索。")
+            parts.append("整体公开信息平稳，未见单项风险显著抬升；维持七大体系全覆盖监测。")
+        parts.append("月度/周度对比应以条目增量、告警占比、跨境主题占比为核心指标持续回溯。")
         return " ".join(parts)
+
     @staticmethod
     def _match(item: IntelItem, keys: List[str]) -> bool:
         blob = " ".join(
@@ -350,24 +456,31 @@ class AnalysisEngine:
                 item.title_zh or "",
                 item.summary or "",
                 item.summary_zh or "",
+                item.content or "",
+                item.content_zh or "",
             ]
         ).lower()
         return any(k.lower() in blob for k in keys)
+
     @staticmethod
     def _md_to_simple_html(md: str) -> str:
+        # 轻量转换，满足邮件展示
         import html as html_lib
         import re
+
         escaped = html_lib.escape(md)
         lines = escaped.split("\n")
         out = [
-            "<div class='report-body' style='font-family:Segoe UI,Noto Sans SC,Arial,sans-serif;line-height:1.7;color:#ffffff'>"
+            "<div class='report-body' "
+            "style='font-family:Segoe UI,Noto Sans SC,Arial,sans-serif;line-height:1.7;color:#ffffff'>"
         ]
         for line in lines:
             if line.startswith("# "):
                 out.append(f"<h1 style='color:#ffffff'>{line[2:]}</h1>")
             elif line.startswith("## "):
                 out.append(
-                    f"<h2 style='color:#ffffff;border-bottom:1px solid rgba(255,255,.25);padding-bottom:4px'>{line[3:]}</h2>"
+                    f"<h2 style='color:#ffffff;border-bottom:1px solid rgba(255,255,255,.25);"
+                    f"padding-bottom:4px'>{line[3:]}</h2>"
                 )
             elif line.startswith("### "):
                 out.append(f"<h3 style='color:#ffffff'>{line[4:]}</h3>")
@@ -376,10 +489,11 @@ class AnalysisEngine:
             elif re.match(r"\d+\. ", line):
                 out.append(f"<div style='color:#ffffff'>{line}</div>")
             elif line.strip() == "---":
-                out.append("<hr style='border-color:rgba(255,255,.25)'/>")
+                out.append("<hr style='border-color:rgba(255,255,255,.25)'/>")
             elif line.strip() == "":
                 out.append("<br/>")
             else:
+                # 粗体 ** **
                 line2 = re.sub(r"\*\*(.+?)\*\*", r"<strong style='color:#ffffff'>\1</strong>", line)
                 out.append(f"<p style='color:#ffffff'>{line2}</p>")
         out.append("</div>")
