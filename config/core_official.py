@@ -206,27 +206,33 @@ def build_core_site_search_queries(
     time_range: str = "1y",
     when: str | None = None,
 ) -> List[dict]:
-    """为清单内每个官网生成 site: 关键词检索任务（1年窗口）。"""
+    """清单内每个官网：合并关键词的 site: 检索 + 少量站内搜（快、全覆盖）。"""
+    from urllib.parse import quote_plus
+
     tr = (when or time_range or "1y").strip()
     when_suffix = f" when:{tr}" if tr and not str(tr).startswith("when:") else (f" {tr}" if tr else "")
     tasks: List[dict] = []
 
-    def _add(source: dict, domain: str, kw: str, hl: str, gl: str, ceid: str) -> None:
+    zh_or = " OR ".join(KW_ZH[:7])
+    en_or = " OR ".join(f'"{k}"' if " " in k else k for k in KW_EN[:5])
+    mn_or = " OR ".join(f'"{k}"' for k in KW_MN[:4])
+
+    def _task(source: dict, domain: str, query_core: str, hl: str, gl: str, ceid: str, tag: str) -> None:
         sid = int(source.get("system_id") or 8)
         sname = source.get("system_name") or "全国媒体与公开资讯"
         org = source.get("org_name") or domain
         if "unodc.org" in domain:
-            q = f"site:unodc.org Mongolia ({kw}){when_suffix}"
+            q = f"site:unodc.org Mongolia ({query_core}){when_suffix}"
         elif domain.endswith("nncc626.com") or "news.cn" in domain or "xinhuanet" in domain:
-            q = f"site:{domain} (蒙古国 OR 中蒙) ({kw}){when_suffix}"
+            q = f"site:{domain} (蒙古国 OR 中蒙 OR 扎门乌德 OR 甘其毛都) ({query_core}){when_suffix}"
         elif "cgtn.com" in domain or "akipress.com" in domain:
-            q = f"site:{domain} Mongolia ({kw}){when_suffix}"
+            q = f"site:{domain} Mongolia ({query_core}){when_suffix}"
         else:
-            q = f"site:{domain} ({kw}){when_suffix}"
+            q = f"site:{domain} ({query_core}){when_suffix}"
         tasks.append({
             "system_id": sid,
             "system_name": sname,
-            "org_name": f"检索·{org}·{kw[:12]}",
+            "org_name": f"检索·{org}·{tag}",
             "query": q,
             "hl": hl,
             "gl": gl,
@@ -244,33 +250,29 @@ def build_core_site_search_queries(
             .replace("http://", "")
             .rstrip("/")
         )
-        # 去掉 www. 便于 site: 匹配
         domain_bare = domain[4:] if domain.startswith("www.") else domain
         lang = str(source.get("lang") or "en")
-        if "zh" in lang:
-            hl, gl, ceid = "zh-CN", "cn", "CN:zh-Hans"
-            kws = KW_ZH
-        elif lang == "mn" or (lang.startswith("mn") and "en" not in lang and "zh" not in lang):
-            hl, gl, ceid = "mn", "mn", "MN:mn"
-            kws = KW_MN + ["мансууруулах", "хар тамхи"]
+        # 蒙通社三语各一路；其余站点按主语言 1～2 路
+        if "montsame.mn" in domain_bare:
+            _task(source, domain_bare, zh_or, "zh-CN", "cn", "CN:zh-Hans", "中文")
+            _task(source, domain_bare, en_or, "en", "us", "US:en", "英文")
+            _task(source, domain_bare, mn_or, "mn", "mn", "MN:mn", "蒙语")
+        elif "zh" in lang:
+            _task(source, domain_bare, zh_or, "zh-CN", "cn", "CN:zh-Hans", "中文")
+        elif lang == "mn" or lang.startswith("mn"):
+            _task(source, domain_bare, mn_or, "mn", "mn", "MN:mn", "蒙语")
+            _task(source, domain_bare, en_or, "en", "us", "US:en", "英文补")
         else:
-            hl, gl, ceid = "en", "us", "US:en"
-            kws = KW_EN
-        # 去重关键词，控制单站任务量
-        seen = set()
-        for kw in kws:
-            if kw in seen:
-                continue
-            seen.add(kw)
-            _add(source, domain_bare, kw, hl, gl, ceid)
+            _task(source, domain_bare, en_or, "en", "us", "US:en", "英文")
 
-    # 蒙通社站内搜索（可打开原文）
-    from urllib.parse import quote_plus
-
+    # 站内搜索：覆盖清单内蒙古媒体（每站少量高价值词）
+    site_kw_mn = KW_MN[:3]
+    site_kw_zh = KW_ZH[:3]
+    site_kw_en = ["narcotics", "fentanyl", "drug seizure"]
     for path, kws, lang in (
-        ("/cn/search?q={q}", KW_ZH[:6], "zh"),
-        ("/en/search?q={q}", KW_EN[:5], "en"),
-        ("/mn/search?q={q}", KW_MN[:4], "mn"),
+        ("/cn/search?q={q}", site_kw_zh, "zh"),
+        ("/en/search?q={q}", site_kw_en, "en"),
+        ("/mn/search?q={q}", site_kw_mn, "mn"),
     ):
         for kw in kws:
             tasks.append({
@@ -287,12 +289,11 @@ def build_core_site_search_queries(
                 "tier": "primary",
                 "source_kind": "site_search",
             })
-
-    # GOGO / IKON / News.mn 站内检索补盲
     for name, tmpl, kws in (
-        ("GOGO站内", "https://gogo.mn/search?q={q}", KW_MN[:4]),
-        ("IKON站内", "https://ikon.mn/search?q={q}", KW_MN[:4]),
-        ("News.mn站内", "https://news.mn/search?q={q}", KW_MN[:4]),
+        ("GOGO站内", "https://gogo.mn/search?q={q}", site_kw_mn),
+        ("IKON站内", "https://ikon.mn/search?q={q}", site_kw_mn),
+        ("News.mn站内", "https://news.mn/search?q={q}", site_kw_mn),
+        ("UB Post站内", "https://ubpost.mongolnews.mn/?s={q}", site_kw_en),
     ):
         for kw in kws:
             tasks.append({
@@ -300,9 +301,9 @@ def build_core_site_search_queries(
                 "system_name": "全国媒体与公开资讯",
                 "org_name": f"{name}·{kw[:10]}",
                 "query": kw,
-                "hl": "mn",
-                "gl": "mn",
-                "ceid": "MN:mn",
+                "hl": "en" if "UB" in name else "mn",
+                "gl": "us" if "UB" in name else "mn",
+                "ceid": "US:en" if "UB" in name else "MN:mn",
                 "engine": "site_search",
                 "search_url": tmpl.format(q=quote_plus(kw)),
                 "require_mongolia": False,

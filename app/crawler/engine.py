@@ -135,15 +135,25 @@ class CrawlEngine:
         self.db.refresh(job)
         try:
             self.seed_sources()
-            # 只扫核心种子页，不扫历史发现的上百条子栏目（那是慢的主因）
-            wanted_urls = set()
-            for s in CORE_OFFICIAL_SOURCES:
-                for path in s.get("seed_paths") or ["/"]:
-                    from urllib.parse import urljoin
+            # 浅扫：每个 base_url 只保留 1 个入口（优先 /cn、/mn、/en），避免多语言入口深翻页
+            path_score = {"/cn": 0, "/mn": 1, "/en": 2, "/": 3}
 
-                    wanted_urls.add(
-                        urljoin(s["base_url"].rstrip("/") + "/", path.lstrip("/")).rstrip("/")
-                    )
+            def _score(url: str) -> int:
+                u = (url or "").rstrip("/")
+                for p, sc in path_score.items():
+                    if u.endswith(p):
+                        return sc
+                return 9
+
+            raw_sources = []
+            for s in CORE_OFFICIAL_SOURCES:
+                from urllib.parse import urljoin
+
+                paths = s.get("seed_paths") or ["/"]
+                best_path = sorted(paths, key=lambda p: path_score.get(p, 5))[0]
+                page = urljoin(s["base_url"].rstrip("/") + "/", best_path.lstrip("/")).rstrip("/")
+                raw_sources.append((s["org_name"], s["base_url"], page))
+
             sources = (
                 self.db.query(Source)
                 .filter(Source.is_active.is_(True))
@@ -151,36 +161,43 @@ class CrawlEngine:
                 .order_by(Source.system_id, Source.id)
                 .all()
             )
-            sources = [
-                s for s in sources
-                if s.org_name in core_orgs
-                or (s.page_url or "").rstrip("/") in wanted_urls
-            ]
-            # 去重同 URL
-            seen_url = set()
-            uniq = []
+            by_org: Dict[str, list] = {}
             for s in sources:
-                u = (s.page_url or "").rstrip("/")
-                if u in seen_url:
+                if s.org_name in core_orgs:
+                    by_org.setdefault(s.org_name, []).append(s)
+            seen_host: Set[str] = set()
+            uniq = []
+            for org_name, base, page in raw_sources:
+                host = urlparse(base).netloc.lower().replace("www.", "")
+                if host in seen_host:
                     continue
-                seen_url.add(u)
-                uniq.append(s)
-            sources = uniq[:40]
+                seen_host.add(host)
+                matched = None
+                for cand in by_org.get(org_name, []):
+                    if (cand.page_url or "").rstrip("/") == page.rstrip("/"):
+                        matched = cand
+                        break
+                if matched is None and by_org.get(org_name):
+                    matched = sorted(by_org[org_name], key=lambda x: _score(x.page_url or ""))[0]
+                if matched is not None:
+                    uniq.append(matched)
+            sources = uniq
             total = len(sources)
             self._emit(
                 "phase",
                 status="running",
-                phase="核心官网增量",
-                message=f"正在增量巡检 {total} 个核心官方页面…",
+                phase="核心官网浅扫",
+                message=f"浅扫清单官网 {total} 站（每站1入口，少翻页防漏）…",
                 total_sources=total,
                 current_index=0,
             )
             old_max = settings.crawl_max_pages_per_source
-            settings.crawl_max_pages_per_source = min(
-                old_max, int(getattr(settings, "crawl_max_pages_core", 12) or 12)
-            )
+            shallow = int(getattr(settings, "crawl_max_pages_core", 4) or 4)
+            if shallow <= 0:
+                shallow = 4
+            settings.crawl_max_pages_per_source = min(old_max if old_max > 0 else 4, max(2, min(shallow, 6)))
             try:
-                self._crawl_source_list(job, sources, resume=resume, phase="核心官网增量")
+                self._crawl_source_list(job, sources, resume=resume, phase="核心官网浅扫")
             finally:
                 settings.crawl_max_pages_per_source = old_max
             job.status = "success"
@@ -191,11 +208,11 @@ class CrawlEngine:
             job.items_filtered = self.stats["items_filtered"]
             job.error_count = self.stats["error_count"]
             job.message = (
-                f"核心官网完成：新{self.stats['items_new']} "
+                f"核心官网浅扫完成：新{self.stats['items_new']} "
                 f"更新{self.stats['items_updated']} 过滤{self.stats['items_filtered']}"
             )
             self.db.commit()
-            self._emit("phase", status="success", phase="核心官网完成", message=job.message)
+            self._emit("phase", status="success", phase="核心官网浅扫完成", message=job.message)
             return job
         except Exception as exc:  # noqa: BLE001
             logger.exception("core official crawl failed")

@@ -98,19 +98,21 @@ def run_intel_cycle(
             stats_collector = OfficialStatsCollector(db, on_event=on_event)
             result["official_stats"] = stats_collector.run(mode="news" if news_only else "full")
 
-        # 文档要求：直采核心官方站点。全量也只跑核心官网（避免 150+ 源扫几天）
+        # 混合模式：关键词检索为主后，仅对清单站点做浅扫防漏（每站1入口、少页）
         if settings.enable_official_crawl:
             old_max = settings.crawl_max_pages_per_source
             try:
+                shallow = int(getattr(settings, "crawl_max_pages_core", 4) or 4)
+                if shallow <= 0:
+                    shallow = 4
+                shallow = min(old_max if old_max > 0 else 4, max(2, min(shallow, 6)))
                 emit(
                     "phase",
                     status="running",
-                    phase="核心官网巡检",
-                    message="正在扫描蒙通社/警察/海关/UNODC/卫生/政府核心官网（限速精简）…",
+                    phase="核心官网浅扫",
+                    message=f"检索完成后浅扫清单官网（每站最多 {shallow} 页，防漏）…",
                 )
-                settings.crawl_max_pages_per_source = min(
-                    old_max, int(getattr(settings, "crawl_max_pages_core", 6) or 6)
-                )
+                settings.crawl_max_pages_per_source = shallow
                 crawler = CrawlEngine(db, on_event=on_event)
                 job = crawler.run_core_official_crawl(resume=False)
             finally:

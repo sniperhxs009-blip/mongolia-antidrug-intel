@@ -55,7 +55,7 @@ class Settings(BaseSettings):
     full_when: str = "30d"
     forum_when: str = "30d"
     crawl_max_pages_official: int = 0
-    crawl_max_pages_core: int = 0
+    crawl_max_pages_core: int = 4  # 浅扫：每站最多页数
     crawl_max_per_host_per_day: int = 2
     primary_search_rounds_per_day: int = 2
     secondary_search_rounds_per_day: int = 1

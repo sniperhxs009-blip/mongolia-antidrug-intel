@@ -90,33 +90,39 @@ class SearchFeedCollector:
             "Accept-Language": "mn,en;q=0.9,zh-CN;q=0.8",
         }
         when = (
-            (getattr(settings, "news_when", "30d") if mode == "news" else getattr(settings, "full_when", "30d"))
-            or "30d"
+            (getattr(settings, "news_when", "1y") if mode == "news" else getattr(settings, "full_when", "1y"))
+            or "1y"
         )
-        # 全量修复版：以合法种子关键词检索为主，不做全站递归/论坛泛爬
+        # 混合模式：清单内全部官网 site:/站内检索为主（快、覆盖全），不再跑超大泛词库
         from config.core_official import build_core_site_search_queries
 
         core_feeds = build_core_site_search_queries(when=when)
-        repair_mode = bool(getattr(settings, "crawl_forbid_proxy", True)) and (
-            not bool(getattr(settings, "enable_official_crawl", False))
+        zh_news = [
+            f
+            for f in build_search_queries(mode="news", when=when)
+            if f.get("engine") == "google_news"
+            and (f.get("hl") or "").startswith("zh")
+            and "蒙古" in (f.get("query") or "")
+        ][:6]
+        en_news = [
+            f
+            for f in build_search_queries(mode="news", when=when)
+            if f.get("engine") == "google_news"
+            and (f.get("hl") or "").startswith("en")
+            and "Mongolia" in (f.get("query") or "")
+        ][:4]
+        feeds = list(core_feeds) + zh_news + en_news
+        if mode == "full" and getattr(settings, "enable_forum_search", False):
+            extra = [
+                f for f in build_search_queries(mode="full", when=when)
+                if f.get("system_id") == 11
+            ][:6]
+            feeds.extend(extra)
+        phase = "清单官网关键词检索"
+        msg = (
+            f"检索优先（近{when}）：清单站点 {len(core_feeds)} 路"
+            f" + 中英补盲 {len(zh_news)+len(en_news)} 路"
         )
-        if repair_mode:
-            # 仅核心 site:/站内检索 + 精简中文新闻检索（结果再经白名单过滤）
-            zh_news = [
-                f
-                for f in build_search_queries(mode="news", when=when)
-                if f.get("engine") == "google_news"
-                and (f.get("hl") or "").startswith("zh")
-                and "蒙古" in (f.get("query") or "")
-            ]
-            feeds = list(core_feeds) + zh_news[:6]
-            phase = "关键词检索式增量采集"
-            msg = f"启动全量修复版检索（近{when}），核心 {len(core_feeds)} + 中文补盲 {min(6, len(zh_news))} 路"
-        else:
-            feeds = build_search_queries(mode=mode, when=when)
-            feeds = list(feeds) + list(core_feeds)
-            phase = "最新新闻监测" if mode == "news" else "关键词全量搜索"
-            msg = f"启动搜索（近{when}），共 {len(feeds)} 路（含核心 site {len(core_feeds)}）"
         # 论坛开关
         if not getattr(settings, "enable_forum_search", True):
             feeds = [f for f in feeds if f.get("source_kind") not in ("forum",) and f.get("system_id") != 11]
@@ -129,6 +135,8 @@ class SearchFeedCollector:
                     str(f.get(k) or "") for k in ("search_url", "query", "org_name")
                 ).lower()
                 if "site:" in blob and ".gov.mn" in blob:
+                    return False
+                if "shturl" in blob:
                     return False
                 if is_forbidden_url(f.get("search_url") or ""):
                     return False
