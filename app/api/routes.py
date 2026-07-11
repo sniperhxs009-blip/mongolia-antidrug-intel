@@ -160,7 +160,15 @@ def system_health(db: Session = Depends(get_db), user=Depends(require_login)):
 
 @router.get("/api/health")
 def health():
-    return {"status": "ok", "time": datetime.utcnow().isoformat(), "app": settings.app_name}
+    import os
+
+    return {
+        "status": "ok",
+        "time": datetime.utcnow().isoformat(),
+        "app": settings.app_name,
+        "git_commit": os.environ.get("RENDER_GIT_COMMIT", ""),
+        "require_manual_deploy": getattr(settings, "require_manual_deploy", True),
+    }
 
 
 @router.get("/api/self-check")
