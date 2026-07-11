@@ -513,12 +513,6 @@ class CrawlEngine:
             self.stats["items_filtered"] += 1
             return
 
-        # 短快讯：内容过短但标题涉毒仍保留（取消 250 字门槛）
-        if len(title) + len(content) < 100 and not is_drug_related(title, loose=False):
-            if len(title) < 12:
-                self.stats["items_filtered"] += 1
-                return
-
         lang = detect_lang(blob) or src.lang or "mn"
         title_zh = translate_to_zh(title, lang, settings.enable_translation)
         summary_zh = translate_to_zh(summary, lang, settings.enable_translation)

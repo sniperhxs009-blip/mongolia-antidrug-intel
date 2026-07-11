@@ -24,8 +24,8 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./data/intel.db"
 
     crawl_interval: str = "hourly"
-    crawl_request_delay_sec: float = 3.0
-    crawl_delay_jitter_sec: float = 5.0  # 合计约 3–8 秒间隔
+    crawl_request_delay_sec: float = 0.3
+    crawl_delay_jitter_sec: float = 0.5  # 修改原因：与 .env 同步，降低检索间隔
     crawl_max_pages_per_source: int = 20
     crawl_user_agent: str = (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -48,10 +48,10 @@ class Settings(BaseSettings):
     enable_official_crawl: bool = True
     enable_core_official_in_news: bool = True
     enable_official_stats: bool = True
-    enable_forum_search: bool = False
+    enable_forum_search: bool = True
 
     crawl_mode: str = "news"
-    news_when: str = "30d"
+    news_when: str = "90d"
     full_when: str = "30d"
     forum_when: str = "30d"
     crawl_max_pages_official: int = 0

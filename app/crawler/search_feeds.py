@@ -653,7 +653,8 @@ class SearchFeedCollector:
                     raise RuntimeError(f"HTTP {resp.status_code}")
                 continue
             soup = BeautifulSoup(resp.text, "lxml")
-            for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
+            # 修改原因：仅删 script/style/noscript，保留 header/footer/nav/aside 正文
+            for tag in soup(["script", "style", "noscript"]):
                 tag.decompose()
             page_cands = self._collect_site_search_candidates(soup, page_url, query)
             all_candidates.extend(page_cands[:80])  # 修改原因：每页30→80条
