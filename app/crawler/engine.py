@@ -496,7 +496,7 @@ class CrawlEngine:
         # 原缺陷：仅用标题+摘要且蒙通社强制标题含毒词 → 深度专题被误删
         # 优化：标题/摘要/正文任一命中强毒词即可；取消蒙通社标题强制
         gate_blob = f"{title}\n{summary}\n{content[:2500]}"
-        if not is_drug_related(gate_blob, extra_keywords, loose=True):
+        if not is_drug_related(gate_blob, extra_keywords, loose=False):
             self.stats["items_filtered"] += 1
             return
         # UNODC：放宽为分栏/统计信号即可，不必全文强调 Mongolia
@@ -514,7 +514,7 @@ class CrawlEngine:
             return
 
         # 短快讯：内容过短但标题涉毒仍保留（取消 250 字门槛）
-        if len(title) + len(content) < 100 and not is_drug_related(title, loose=True):
+        if len(title) + len(content) < 100 and not is_drug_related(title, loose=False):
             if len(title) < 12:
                 self.stats["items_filtered"] += 1
                 return

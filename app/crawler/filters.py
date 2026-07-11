@@ -1,9 +1,6 @@
-﻿"""过滤规则优化：正文强词可入库；弱化标题强制；精准蒙古国匹配；无日期不直接丢弃。
+﻿"""过滤层定稿：严格蒙古国判定 + 强毒品词入库 + 噪音永久拦截。
 
-【本次全链路增产修复】
-缺陷：UNODC 过严、短讯误删、布里亚特/俄边境误删、gov.mn 快照无法入库、去重过激。
-修改：UNODC 分栏信号放宽；俄边境城市列表；≥100字快讯保留；content_hash 含机构+日期；
-      负面词完整匹配；is_allowed_url 放行谷歌快照；统一 loose 判定入口。
+修改原因：此前弱词/俄边境兜底导致内蒙古、布里亚特、烟草等无关内容入库。
 """
 from __future__ import annotations
 
@@ -13,11 +10,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 from urllib.parse import urlparse
 
-from config.core_official import (
-    TOPIC_BLACKLIST,
-    is_forbidden_url,
-    is_google_snapshot_or_news_url,
-)
+from config.core_official import TOPIC_BLACKLIST, is_forbidden_url
 from config.sources import (
     ALLOW_ANY_MN_DOMAIN,
     ALLOW_GLOBAL_MEDIA,
@@ -25,44 +18,65 @@ from config.sources import (
     BLOCKED_SUFFIXES,
 )
 
+# 【强管制毒品词】仅此类可触发涉毒入库
 STRONG_DRUG_TERMS = [
-    "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒", "运毒", "戒毒",
-    "海洛因", "大麻", "安纳咖", "芬太尼", "尼秦", "异托尼他秦", "合成大麻素",
-    "易制毒", "麻精药品", "冰毒", "氯胺酮", "可卡因", "鸦片",
+    "芬太尼", "尼秦", "异托尼他秦", "安纳咖", "甲基苯丙胺", "冰毒", "海洛因", "大麻",
+    "可卡因", "氯胺酮", "鸦片", "合成大麻素", "易制毒", "麻精药品",
+    "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒",
     "хар тамхи", "мансууруулах", "фентанил", "нитазен", "метамфетамин",
-    "fentanyl", "nitazene", "cannabis", "narcotic", "methamphetamine",
-    "heroin", "cocaine", "ketamine", "drug seizure", "anti-drug", "antidrug",
+    "fentanyl", "nitazene", "isotonitazene", "methamphetamine", "crystal meth",
+    "heroin", "cannabis", "marijuana", "cocaine", "ketamine", "narcotic",
+    "anti-drug", "antidrug", "drug trafficking", "illicit drug", "illegal drug",
 ]
+# 【弱执法词】单独命中不入库，须与强毒品词同现
 WEAK_DRUG_TERMS = [
-    "seizure", "seized", "seize", "trafficking", "smuggling", "smuggled", "smuggler", "smuggle",
+    "seizure", "seized", "seize", "trafficking", "smuggling", "smuggled",
     "查获", "走私", "口岸", "跨境", "баривчилгаа", "хураан", "гааль", "хил",
 ]
-STRONG_DRUG_EXTRA = [
-    "drug smuggl", "drug bust", "drug traffick", "illegal drug", "illicit drug",
-    "anti-drug", "antidrug", "narcotics",
-]
+# 【烟草/普通医药/赛事】永久拦截
 HARD_EXCLUDE_PATTERNS = [
     r"\bhuman trafficking\b",
     r"weight[- ]?loss",
     r"\bdiet pills?\b",
     r"\bcigarettes?\b",
+    r"\bcigarette\b",
+    r"\btobacco\b",
+    r"烟草",
+    r"香烟",
     r"\bammunition\b",
     r"rounds of ammunition",
     r"mongolian bbq",
     r"\bhepatitis\b",
     r"\banti-corruption\b",
     r"奥运会",
-    r"兴奋剂\s*wada",
-    r"\bwada\b.*(?:doping|兴奋剂|athlete)",
+    r"兴奋剂",
+    r"\bwada\b",
+    r"\bdoping\b",
+    r"普通药品",
+    r"medical care",
+    r"处方药",
+    r"\bprescription\b",
+    # 俄边境/布里亚特/内蒙古噪音（无蒙古国锚点时由地域函数丢弃；此处强化烟草等）
+    r"分裂主义",
+    r"地缘政治对抗",
 ]
-BURYAT_MARKERS = [
-    r"buryat", r"бурят", r"ulan[- ]?ude", r"улан[- ]?удэ", r"乌兰乌德", r"布里亚特",
+# 负面地域：出现且无蒙古国正锚点 → 丢弃
+NEGATIVE_GEO_MARKERS = [
+    r"内蒙古", r"\binner mongolia\b", r"өvөр\s*монгол", r"ovorkh",
+    r"乌兰乌德", r"ulan[- ]?ude", r"улан[- ]?удэ",
+    r"布里亚特", r"buryat", r"бурят",
+    r"赤塔", r"\bchita\b", r"чита",
+    r"恰克图", r"kyakhta", r"кяхта",
+    r"后贝加尔", r"забайкал", r"zabaikal",
 ]
-RU_BORDER_MARKERS = [
-    r"\bchita\b", r"чита", r"kyakhta", r"кяхта", r"забайкал", r"zabaikal",
-    r"后贝加尔", r"恰克图", r"赤塔", r"манчжур", r"manzhouli",
-]
-NEGATIVE_PATTERNS = HARD_EXCLUDE_PATTERNS + [r"奥运会"]
+
+NEGATIVE_PATTERNS = HARD_EXCLUDE_PATTERNS
+
+# 谷歌检索统一负面排除语法（修改原因：检索层降噪）
+SEARCH_NEGATIVE_EXCLUDE = (
+    ' -"内蒙古" -"Inner Mongolia" -乌兰乌德 -布里亚特 -赤塔 -恰克图 -后贝加尔 '
+    "-兴奋剂 -奥运会 -tobacco -cigarette -普通药品 -\"medical care\""
+)
 
 
 def content_hash(
@@ -73,9 +87,13 @@ def content_hash(
     org_name: str = "",
     published: Optional[datetime] = None,
 ) -> str:
+    """去重：归一化标题+正文前缀，同源多语种通稿易合并；URL 仅作辅键。"""
+    # 修改原因：不同媒体同案重复入库 → 归一化标题合并
+    norm_title = re.sub(r"\s+", "", (title or "").lower())
+    norm_title = re.sub(r"[^\w\u4e00-\u9fffа-яөүА-ЯӨҮ]", "", norm_title)[:120]
+    body_key = re.sub(r"\s+", "", (body or "")[:800].lower())
     pub = published.strftime("%Y-%m-%d") if published else ""
-    org = (org_name or "").strip()
-    raw = f"{org}|{pub}|{title.strip()}|{url.strip()}|{body[:2000]}".encode("utf-8", errors="ignore")
+    raw = f"{norm_title}|{pub}|{body_key}".encode("utf-8", errors="ignore")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -91,26 +109,62 @@ def detect_lang(text: str) -> str:
     return "en"
 
 
+_translate_fail_streak = 0
+# 修改原因：翻译结果缓存 30 天 TTL，减少重复调用
+_translate_cache: dict = {}  # key -> (ts, text)
+_TRANSLATE_CACHE_TTL_SEC = 30 * 24 * 3600
+
+
 def translate_to_zh(
     text: str,
     lang: str = None,
     enabled: bool = True,
     source_lang: str = None,
 ) -> str:
+    """翻译熔断：连续5次失败切本地替换；结果缓存30天。"""
+    global _translate_fail_streak
     if not enabled or not text:
         return text or ""
+    key = hashlib.sha256((text[:2000] + (lang or "")).encode("utf-8", errors="ignore")).hexdigest()
+    now = datetime.utcnow().timestamp()
+    hit = _translate_cache.get(key)
+    if hit and now - hit[0] < _TRANSLATE_CACHE_TTL_SEC:
+        return hit[1]
+    # 熔断
+    if _translate_fail_streak >= 5:
+        return _local_gloss(text)
     try:
         from deep_translator import GoogleTranslator
         src = source_lang or lang or "auto"
         if src in ("zh", "zh-CN"):
+            _translate_cache[key] = (now, text)
             return text
-        return GoogleTranslator(source=src if src != "auto" else "auto", target="zh-CN").translate(text[:4500]) or text
+        out = GoogleTranslator(source=src if src != "auto" else "auto", target="zh-CN").translate(text[:4500]) or text
+        _translate_fail_streak = 0
+        _translate_cache[key] = (now, out)
+        if len(_translate_cache) > 5000:
+            # 淘汰过期项
+            expired = [k for k, v in _translate_cache.items() if now - v[0] >= _TRANSLATE_CACHE_TTL_SEC]
+            for k in expired:
+                _translate_cache.pop(k, None)
+            if len(_translate_cache) > 5000:
+                _translate_cache.clear()
+        return out
     except Exception:
-        rep = [("Mongolia", "蒙古国"), ("Ulaanbaatar", "乌兰巴托"), ("drug", "毒品"), ("narcotic", "麻醉品")]
-        res = text
-        for en, cn in rep:
-            res = re.sub(re.escape(en), cn, res, flags=re.I)
-        return res
+        _translate_fail_streak += 1
+        return _local_gloss(text)
+
+
+def _local_gloss(text: str) -> str:
+    rep = [
+        ("Mongolia", "蒙古国"), ("Ulaanbaatar", "乌兰巴托"), ("drug", "毒品"),
+        ("narcotic", "麻醉品"), ("fentanyl", "芬太尼"), ("methamphetamine", "冰毒"),
+        ("heroin", "海洛因"), ("cannabis", "大麻"),
+    ]
+    res = text
+    for en, cn in rep:
+        res = re.sub(re.escape(en), cn, res, flags=re.I)
+    return res
 
 
 def is_stale(pub_dt: Optional[datetime], max_days: int = 365) -> bool:
@@ -134,48 +188,55 @@ def parse_date_guess(html: str) -> Optional[datetime]:
         return None
 
 
+def has_strong_drug_term(text: str) -> bool:
+    blob = (text or "").lower()
+    return any(s.lower() in blob for s in STRONG_DRUG_TERMS)
+
+
 def is_mongolia_country_related(text: str) -> bool:
+    """严格蒙古国判定（仅用原文，不依赖翻译）。
+
+    修改原因：俄边境/内蒙古靠毒品词兜底误放行。
+    正锚点：蒙古国 / Монгол / Ulaanbaatar / 扎门乌德 / 甘其毛都（及英文等价）。
+    """
     t = text or ""
     tl = t.lower()
-    if "内蒙古" in t and "蒙古国" not in t:
-        if not any(x in t for x in ("中蒙", "扎门乌德", "甘其毛都", "二连", "口岸缉毒")):
-            return False
-    if re.search(r"\binner mongolia\b", tl):
-        return False
-    if any(re.search(p, tl, re.I) for p in BURYAT_MARKERS):
-        if not re.search(
-            r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс|mongolia\s+(police|customs)|中蒙",
-            tl, re.I,
-        ):
-            if not any(s.lower() in tl for s in STRONG_DRUG_TERMS + STRONG_DRUG_EXTRA):
-                return False
-    markers = [
-        "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar", "монгол улс",
-        "蒙古国", "乌兰巴托", "扎门乌德", "甘其毛都", "二连浩特",
-        "中蒙口岸", "中蒙边境", "中蒙", "zamyn-uud", "gashuun", "erenhot",
-        "chita", "чита", "kyakhta", "кяхта", "赤塔", "恰克图", "后贝加尔", "zabaikal",
+    # 负面地域且无正锚点 → False
+    has_neg = any(re.search(p, tl, re.I) for p in NEGATIVE_GEO_MARKERS)
+    positive = [
+        r"蒙古国",
+        r"монгол\s*улс",
+        r"\bmongolia\b",
+        r"\bmongolian\b",
+        r"ulaanbaatar",
+        r"улаанбаатар",
+        r"乌兰巴托",
+        r"扎门乌德",
+        r"zamyn[- ]?uud",
+        r"zamiin[- ]?uud",
+        r"甘其毛都",
+        r"gashuun",
+        r"gashuunsukhait",
     ]
-    if any(m in tl for m in markers) or "蒙古国" in t:
+    has_pos = any(re.search(p, tl, re.I) for p in positive)
+    # 单独「Монгол」过宽，要求与 улс/国名语境或正锚点组合；纯 Монгол 且含内蒙古仍拒
+    if "内蒙古" in t or re.search(r"\binner mongolia\b", tl):
+        return False
+    if has_neg and not has_pos:
+        return False
+    if has_pos:
         return True
-    if re.search(r"(?<!内)蒙古", t):
-        return True
+    # 蒙文 Монгол 出现且非 өвөр монгол
+    if re.search(r"(?<!өвөр\s)монгол", tl) and not re.search(r"өvөр|ovorkh|inner", tl):
+        # 仍要求毒品语境外的国别信号：海关/警察/乌兰巴托等已在 positive；此处仅 монгол улс
+        if re.search(r"монгол", tl) and re.search(r"улс|улаанбаатар|гааль|цагдаа", tl):
+            return True
     return False
 
 
 def is_unodc_mongolia_signal(text: str) -> bool:
-    t = text or ""
-    tl = t.lower()
-    if is_mongolia_country_related(t):
-        return True
-    if re.search(r"\bmongolia\b|\bmng\b|монгол", tl) and re.search(
-        r"seizure|narcotic|drug|traffick|cannabis|meth|opioid|мансууруулах|毒品", tl,
-    ):
-        return True
-    if re.search(r"country\s*(profile|report|data).*mongolia|mongolia.*country\s*(profile|report)", tl):
-        return True
-    if re.search(r"east(ern)?\s*asia.*mongolia|mongolia.*east(ern)?\s*asia", tl):
-        return True
-    return False
+    """UNODC：必须出现蒙古正锚点，禁止仅靠东亚笼统表述放行。"""
+    return is_mongolia_country_related(text or "")
 
 
 def _has_hard_exclude(blob: str) -> bool:
@@ -189,44 +250,107 @@ def _has_hard_exclude(blob: str) -> bool:
     return False
 
 
-def _has_negative(blob: str) -> bool:
-    if _has_hard_exclude(blob):
-        return True
-    low = (blob or "").lower()
-    if any(re.search(p, low, re.I) for p in BURYAT_MARKERS + RU_BORDER_MARKERS):
-        if not any(s.lower() in low for s in STRONG_DRUG_TERMS + STRONG_DRUG_EXTRA):
-            return True
-    return False
+def is_drug_related(text: str, extra=None, loose: bool = False) -> bool:
+    """严格涉毒判定：默认 loose=False；仅弱词不入库。
 
-
-def is_drug_related(text: str, extra=None, loose: bool = True) -> bool:
+    修改原因：口岸/查获单独命中导致烟草弹药等噪音入库。
+    """
     blob = (text or "").lower()
     if not blob.strip():
         return False
     if _has_hard_exclude(blob):
         return False
     extras = [str(x).lower() for x in (extra or []) if x]
-    if any(s.lower() in blob for s in STRONG_DRUG_TERMS):
+    strong = has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3))
+    if strong:
         return True
-    if any(s.lower() in blob for s in STRONG_DRUG_EXTRA):
-        return True
-    if extras and any(e in blob for e in extras):
-        return True
-    if any(w.lower() in blob for w in WEAK_DRUG_TERMS):
-        if _has_negative(blob) and not any(s.lower() in blob for s in STRONG_DRUG_TERMS + STRONG_DRUG_EXTRA):
-            return False
-        return True
+    # 弱词单独命中 → 不入库（即使 loose=True 也要求强词，定稿收紧）
+    if loose and any(w.lower() in blob for w in WEAK_DRUG_TERMS):
+        return False
     return False
 
 
+def title_has_strong_drug(title: str) -> bool:
+    """标题前置过滤：无强毒品词则跳过下载。"""
+    return has_strong_drug_term(title or "")
+
+
+def credibility_label(org_name: str = "", system_id: int = 0, url: str = "") -> str:
+    """可信度：官方高 / 地方媒体中 / 论坛低。"""
+    o = (org_name or "").lower()
+    u = (url or "").lower()
+    if system_id in (7, 9) or any(x in o for x in ("unodc", "蒙通社", "montsame", "incb", "nncc", "禁毒网")):
+        return "高"
+    if system_id == 11 or any(x in o + u for x in ("reddit", "论坛", "zhihu", "贴吧", "bluelight", "forum")):
+        return "低"
+    return "中"
+
+
+def alert_category(text: str) -> str:
+    """告警细分：口岸大宗 / 新型毒品 / 跨境联合 / 禁毒新法。"""
+    t = (text or "").lower()
+    if any(x in t for x in ("新法", "列管", "立法", "law", "amendment")):
+        return "禁毒新法"
+    if any(x in t for x in ("芬太尼", "尼秦", "fentanyl", "nitazene", "nps", "合成")):
+        return "芬太尼/尼秦新型毒品"
+    if any(x in t for x in ("联合行动", "interpol", "csto", "跨境协作", "joint operation")):
+        return "跨境联合行动"
+    if any(x in t for x in ("口岸", "吨", "公斤", "大宗", "扎门", "甘其毛都", "customs", "seizure")):
+        return "口岸大宗"
+    return "综合告警"
+
+
+def port_tag_from_text(text: str) -> str:
+    """修改原因：分口岸趋势统计标签。"""
+    t = (text or "").lower()
+    if any(x in t for x in ("扎门乌德", "zamyn", "zamiin")):
+        return "扎门乌德"
+    if any(x in t for x in ("甘其毛都", "gashuun", "gashuunsukhait")):
+        return "甘其毛都"
+    if any(x in t for x in ("俄蒙", "俄蒙边境", "mongolia-russia", "хил")):
+        return "俄蒙边境"
+    if any(x in t for x in ("口岸", "customs", "гааль", "border")):
+        return "其他口岸"
+    return ""
+
+
+def drug_type_from_text(text: str) -> str:
+    """修改原因：毒品类型索引字段。"""
+    t = (text or "").lower()
+    if any(x in t for x in ("芬太尼", "fentanyl")):
+        return "芬太尼"
+    if any(x in t for x in ("尼秦", "nitazene")):
+        return "尼秦"
+    if any(x in t for x in ("甲基苯丙胺", "冰毒", "meth")):
+        return "冰毒"
+    if any(x in t for x in ("海洛因", "heroin")):
+        return "海洛因"
+    if any(x in t for x in ("大麻", "cannabis", "marijuana")):
+        return "大麻"
+    if any(x in t for x in ("安纳咖", "ephedrine")):
+        return "安纳咖"
+    if has_strong_drug_term(t):
+        return "其他管制品"
+    return ""
+
+
+def sanitize_sensitive_text(text: str, hide_details: bool = False) -> str:
+    """敏感叙事与涉密细节清洗（报告/邮件双重使用）。"""
+    t = text or ""
+    # 分裂/地缘负面粗过滤
+    for pat in (r"分裂[^。\n]{0,20}", r"地缘政治对抗[^。\n]{0,30}"):
+        t = re.sub(pat, "【已屏蔽】", t)
+    if hide_details:
+        t = re.sub(r"\d+(?:\.\d+)?\s*(?:公斤|千克|吨|kg|kilogram)", "【数量已隐藏】", t, flags=re.I)
+        t = re.sub(r"(芬太尼|尼秦|fentanyl|nitazene)[^。\n]{0,40}", r"\1【细节已隐藏】", t, flags=re.I)
+    return t
+
+
 def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
-    try:
-        if is_google_snapshot_or_news_url(url):
-            return True
-        if is_forbidden_url(url):
-            return False
-    except Exception:
-        pass
+    # 修改原因：任何 gov.mn 一律拒绝（含包装链探测）
+    low = (url or "").lower()
+    if "gov.mn" in low or is_forbidden_url(url):
+        return False
     try:
         host = urlparse(url).netloc.lower().split(":")[0]
     except Exception:
@@ -251,7 +375,7 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
         for suf in (
             "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk",
             "xinhuanet.com", "news.cn", "cgtn.com", "akipress.com",
-            "tass.com", "ria.ru",
+            "tass.com", "ria.ru", "montsame.mn", "gogo.mn", "ikon.mn",
         ):
             if host_bare == suf or host.endswith("." + suf):
                 return True
@@ -269,7 +393,7 @@ def same_host_or_sub(url_a: str, url_b: str) -> bool:
 
 def classify_category(text: str) -> str:
     t = (text or "").lower()
-    if any(x in t for x in ["口岸", "гааль", "border", "customs", "边境", "跨境", "扎门", "甘其毛都", "赤塔", "恰克图"]):
+    if any(x in t for x in ["口岸", "гааль", "border", "customs", "边境", "跨境", "扎门", "甘其毛都"]):
         return "跨境毒情"
     if any(x in t for x in ["戒毒", "сэргээх", "rehab", "成瘾", "青少年"]):
         return "戒毒康复"

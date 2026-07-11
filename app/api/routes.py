@@ -17,10 +17,17 @@ from app.db.models import CrawlJob, EmailLog, IntelItem, Report, Source, StatRec
 from app.pipeline import run_intel_cycle
 from app.progress import progress_hub
 from app.scheduler.jobs import reschedule_crawl
+from app.auth import issue_token, require_admin, require_login, verify_login, auth_enabled, current_user
+from app.audit import audit_log
+from app.crawler.crawl_lock import try_acquire, release, current_owner
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/templates")
 settings = get_settings()
+
+
+def _client_ip(request: Request) -> str:
+    return request.client.host if request.client else ""
 
 
 def _run_cycle_with_progress(run_id: str, report_type: str = "daily", mode: str = "full") -> None:
@@ -33,6 +40,10 @@ def _run_cycle_with_progress(run_id: str, report_type: str = "daily", mode: str 
     def on_event(event_type: str, **payload):
         prog.emit(event_type, **payload)
 
+    owner = f"crawl-{run_id}"
+    if not try_acquire(owner):
+        prog.emit("error", status="failed", phase="失败", message="已有采集任务占用互斥锁")
+        return
     db = SessionLocal()
     try:
         run_intel_cycle(
@@ -45,11 +56,15 @@ def _run_cycle_with_progress(run_id: str, report_type: str = "daily", mode: str 
     except Exception as exc:  # noqa: BLE001
         prog.emit("error", status="failed", phase="失败", message=str(exc))
     finally:
+        release(owner)
         db.close()
 
 
 @router.get("/", response_class=HTMLResponse)
-def dashboard(request: Request, db: Session = Depends(get_db)):
+def dashboard(request: Request, db: Session = Depends(get_db), user=Depends(current_user)):
+    if auth_enabled() and not user:
+        return RedirectResponse("/login", status_code=302)
+    audit_log("view_dashboard", ip=_client_ip(request), user=(user or {}).get("username", ""))
     intel_count = db.query(IntelItem).count()
     source_count = db.query(Source).filter(Source.is_active.is_(True)).count()
     report_count = db.query(Report).count()
@@ -78,6 +93,8 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
             "source_count": source_count,
             "report_count": report_count,
             "alert_count": alert_count,
+            "user": user,
+            "watermark": f"MN-INTEL|{(user or {}).get('username','anon')}|trace",
             "stat_count": stat_count,
             "latest_items": latest_items,
             "latest_stats": latest_stats,
@@ -91,14 +108,65 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    return HTMLResponse(
+        "<html><body style='font-family:sans-serif;padding:40px'>"
+        "<h2>登录 · 蒙古国禁毒情报系统</h2>"
+        "<form method='post' action='/api/login'>"
+        "用户名 <input name='username'/> 密码 <input name='password' type='password'/>"
+        "<button type='submit'>登录</button></form>"
+        "<p style='color:#666'>管理员可执行全量采集/删除；研判员只读与导出。</p>"
+        "</body></html>"
+    )
+
+
+@router.post("/api/login")
+def api_login(request: Request, username: str = Form(...), password: str = Form(...)):
+    info = verify_login(username, password)
+    if not info:
+        audit_log("login_failed", ip=_client_ip(request), user=username)
+        return HTMLResponse("登录失败 <a href='/login'>返回</a>", status_code=401)
+    tok = issue_token(info)
+    audit_log("login_ok", ip=_client_ip(request), user=username)
+    resp = RedirectResponse("/", status_code=302)
+    resp.set_cookie("mn_auth_token", tok, httponly=True, samesite="lax")
+    return resp
+
+
+@router.get("/api/system-health")
+def system_health(db: Session = Depends(get_db), user=Depends(require_login)):
+    import os
+    import shutil
+
+    db_ok = True
+    try:
+        db.query(IntelItem).count()
+    except Exception:
+        db_ok = False
+    disk = shutil.disk_usage(".")
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database": db_ok,
+        "crawl_lock": current_owner(),
+        "busy": progress_hub.is_busy(),
+        "mail_configured": bool(settings.smtp_user and settings.smtp_password and settings.email_to),
+        "auth_enabled": auth_enabled(),
+        "require_manual_deploy": getattr(settings, "require_manual_deploy", True),
+        "disk_free_mb": int(disk.free / 1024 / 1024),
+        "pid": os.getpid(),
+    }
+
+
 @router.get("/api/health")
 def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat(), "app": settings.app_name}
 
 
 @router.get("/api/self-check")
-def self_check(db: Session = Depends(get_db)):
+def self_check(db: Session = Depends(get_db), user=Depends(require_login)):
     """全量修复版自检报告。"""
+    # 修改原因：数据接口必须登录
     from config.core_official import (
         CORE_OFFICIAL_SOURCES,
         FORBIDDEN_HOSTS,
@@ -164,14 +232,22 @@ def self_check(db: Session = Depends(get_db)):
 
 
 @router.get("/api/trend-30d")
-def trend_30d(db: Session = Depends(get_db)):
+def trend_30d(db: Session = Depends(get_db), user=Depends(require_login)):
     from app.analysis.engine import AnalysisEngine
 
     return AnalysisEngine(db).trend_compare_30d()
 
 
+@router.get("/api/port-trend")
+def port_trend(db: Session = Depends(get_db), user=Depends(require_login)):
+    # 修改原因：分口岸趋势独立接口
+    from app.analysis.engine import AnalysisEngine
+
+    return {"markdown": AnalysisEngine(db).port_trend_report(days=30)}
+
+
 @router.get("/api/stats")
-def stats(db: Session = Depends(get_db)):
+def stats(db: Session = Depends(get_db), user=Depends(require_login)):
     return {
         "intel_items": db.query(IntelItem).count(),
         "sources": db.query(Source).count(),
@@ -184,7 +260,7 @@ def stats(db: Session = Depends(get_db)):
 
 
 @router.get("/api/stat-records")
-def list_stat_records(db: Session = Depends(get_db), limit: int = 50):
+def list_stat_records(db: Session = Depends(get_db), limit: int = 50, user=Depends(require_login)):
     rows = (
         db.query(StatRecord)
         .order_by(StatRecord.crawled_at.desc())
@@ -217,6 +293,7 @@ def list_intel(
     system_id: Optional[int] = None,
     alert_only: bool = False,
     since_id: Optional[int] = None,
+    user=Depends(require_login),
 ):
     q = db.query(IntelItem).order_by(IntelItem.crawled_at.desc())
     if system_id:
@@ -242,6 +319,10 @@ def list_intel(
             "system": r.system_name,
             "level": r.intel_level,
             "category": r.category,
+            "credibility": getattr(r, "credibility", "中"),
+            "alert_kind": getattr(r, "alert_kind", ""),
+            "port_tag": getattr(r, "port_tag", ""),
+            "drug_type": getattr(r, "drug_type", ""),
             "url": r.url,
             "published_at": r.published_at.isoformat() if r.published_at else None,
             "crawled_at": r.crawled_at.isoformat() if r.crawled_at else None,
@@ -251,8 +332,38 @@ def list_intel(
     ]
 
 
+@router.get("/api/export/ledger")
+def export_ledger(
+    request: Request,
+    db: Session = Depends(get_db),
+    fmt: str = "csv",
+    hide_details: bool = False,
+    limit: int = 500,
+    user=Depends(require_login),
+):
+    """分级导出台账：hide_details=true 隐藏缴获数量与新型毒品细节。"""
+    from fastapi.responses import FileResponse
+    from app.export_ledger import export_intel_csv, export_intel_xlsx, export_intel_docx
+
+    rows = db.query(IntelItem).order_by(IntelItem.crawled_at.desc()).limit(min(limit, 2000)).all()
+    out_dir = f"{settings.resolved_data_dir}/exports"
+    audit_log(
+        "export_ledger",
+        ip=_client_ip(request),
+        user=(user or {}).get("username", ""),
+        detail={"fmt": fmt, "hide_details": hide_details, "n": len(rows)},
+    )
+    if fmt == "xlsx":
+        path = export_intel_xlsx(rows, f"{out_dir}/ledger.xlsx", hide_details=hide_details)
+    elif fmt == "docx":
+        path = export_intel_docx(rows, f"{out_dir}/ledger.docx", hide_details=hide_details)
+    else:
+        path = export_intel_csv(rows, f"{out_dir}/ledger.csv", hide_details=hide_details)
+    return FileResponse(path, filename=path.split("/")[-1].split("\\")[-1])
+
+
 @router.get("/api/sources")
-def list_sources(db: Session = Depends(get_db)):
+def list_sources(db: Session = Depends(get_db), user=Depends(require_login)):
     rows = db.query(Source).order_by(Source.system_id, Source.id).all()
     return [
         {
@@ -272,7 +383,7 @@ def list_sources(db: Session = Depends(get_db)):
 
 
 @router.get("/api/reports")
-def list_reports(db: Session = Depends(get_db), limit: int = 20):
+def list_reports(db: Session = Depends(get_db), limit: int = 20, user=Depends(require_login)):
     rows = db.query(Report).order_by(Report.created_at.desc()).limit(limit).all()
     return [
         {
@@ -288,45 +399,64 @@ def list_reports(db: Session = Depends(get_db), limit: int = 20):
 
 
 @router.get("/api/reports/{report_id}")
-def get_report(report_id: int, db: Session = Depends(get_db)):
+def get_report(
+    report_id: int,
+    db: Session = Depends(get_db),
+    hide_details: bool = False,
+    user=Depends(require_login),
+):
+    from app.crawler.filters import sanitize_sensitive_text
+
     r = db.query(Report).filter(Report.id == report_id).first()
     if not r:
         return JSONResponse({"error": "not found"}, status_code=404)
+    md = r.content_md or ""
+    if hide_details:
+        md = sanitize_sensitive_text(md, hide_details=True)
     return {
         "id": r.id,
         "title": r.title,
         "type": r.report_type,
-        "content_md": r.content_md,
-        "content_html": r.content_html,
+        "content_md": md,
+        "content_html": r.content_html if not hide_details else None,
         "created_at": r.created_at.isoformat() if r.created_at else None,
+        "hide_details": hide_details,
     }
 
 
 @router.post("/api/intel/purge")
-def purge_intel(db: Session = Depends(get_db)):
-    """清理非蒙古国或非涉毒的脏数据。"""
-    from app.crawler.cleanup import purge_irrelevant_items
+def purge_intel(request: Request, db: Session = Depends(get_db), user=Depends(require_admin)):
+    """清理非蒙古国或非涉毒的脏数据（仅管理员）。"""
+    from app.crawler.cleanup import purge_irrelevant_items, purge_noise_geo_items
 
     result = purge_irrelevant_items(db)
-    return {"status": "ok", **result}
+    noise = purge_noise_geo_items(db)
+    audit_log("purge_intel", ip=_client_ip(request), user=user.get("username"), detail={**result, **noise})
+    return {"status": "ok", **result, "noise_geo_deleted": noise.get("deleted", 0)}
 
 
 @router.get("/api/crawl/status")
-def crawl_status(run_id: Optional[str] = None):
+def crawl_status(run_id: Optional[str] = None, user=Depends(require_login)):
     prog = progress_hub.get(run_id) if run_id else progress_hub.current()
     if not prog:
-        return {"status": "idle", "busy": False}
+        return {"status": "idle", "busy": False, "lock": current_owner()}
     snap = prog.snapshot()
     snap["busy"] = prog.status in ("queued", "running", "analyzing", "emailing")
+    snap["lock"] = current_owner()
     return snap
 
 
 @router.post("/api/crawl/run")
-def trigger_crawl(report_type: str = "daily", mode: str = "full"):
-    """mode=news：仅抓最新新闻（快）；mode=full：新闻+研判报告。"""
+def trigger_crawl(
+    request: Request,
+    report_type: str = "daily",
+    mode: str = "full",
+    user=Depends(require_admin),
+):
+    """mode=news：仅抓最新新闻（快）；mode=full：新闻+研判报告。仅管理员。"""
     if mode not in ("news", "full"):
         mode = "full"
-    if progress_hub.is_busy():
+    if progress_hub.is_busy() or current_owner():
         cur = progress_hub.current()
         return JSONResponse(
             {
@@ -334,10 +464,12 @@ def trigger_crawl(report_type: str = "daily", mode: str = "full"):
                 "message": "已有巡检任务正在执行",
                 "run_id": cur.run_id if cur else None,
                 "progress": cur.snapshot() if cur else None,
+                "lock": current_owner(),
             },
             status_code=409,
         )
     prog = progress_hub.create(report_type=report_type)
+    audit_log("crawl_start", ip=_client_ip(request), user=user.get("username"), detail={"mode": mode})
     t = threading.Thread(
         target=_run_cycle_with_progress,
         args=(prog.run_id, report_type, mode),
@@ -349,7 +481,7 @@ def trigger_crawl(report_type: str = "daily", mode: str = "full"):
 
 
 @router.get("/api/crawl/stream")
-def crawl_stream(run_id: Optional[str] = None):
+def crawl_stream(run_id: Optional[str] = None, user=Depends(require_login)):
     """SSE：实时推送巡检进度与逐条情报事件。"""
 
     def event_generator():
@@ -411,7 +543,8 @@ def crawl_stream(run_id: Optional[str] = None):
 
 
 @router.post("/api/schedule")
-def update_schedule(interval: str = Form(...)):
+def update_schedule(interval: str = Form(...), user=Depends(require_admin)):
+    # 修改原因：定时修改仅管理员
     if interval not in ("every_30m", "hourly", "every_6h", "every_12h", "daily"):
         return JSONResponse({"error": "invalid interval"}, status_code=400)
     reschedule_crawl(interval)
@@ -431,20 +564,46 @@ def update_schedule(interval: str = Form(...)):
 
 
 @router.get("/reports/{report_id}", response_class=HTMLResponse)
-def report_page(report_id: int, request: Request, db: Session = Depends(get_db)):
+def report_page(
+    report_id: int,
+    request: Request,
+    db: Session = Depends(get_db),
+    hide_details: bool = False,
+    user=Depends(current_user),
+):
+    if auth_enabled() and not user:
+        return RedirectResponse("/login", status_code=302)
+    from app.crawler.filters import sanitize_sensitive_text
+
     r = db.query(Report).filter(Report.id == report_id).first()
     if not r:
         return HTMLResponse("报告不存在", status_code=404)
+    audit_log("view_report", ip=_client_ip(request), user=(user or {}).get("username", ""), detail=report_id)
+    content_html = r.content_html or ""
+    if hide_details:
+        content_html = sanitize_sensitive_text(content_html, hide_details=True)
+    # 隐形溯源水印（CSS 几乎不可见）
+    wm = f"<div style='position:fixed;bottom:4px;right:8px;opacity:0.04;font-size:10px;pointer-events:none'>" \
+         f"MN-INTEL|{(user or {}).get('username','anon')}|{report_id}</div>"
     return templates.TemplateResponse(
         "report.html",
-        {"request": request, "report": r, "app_name": settings.app_name},
+        {
+            "request": request,
+            "report": r,
+            "app_name": settings.app_name,
+            "content_html": content_html + wm,
+            "hide_details": hide_details,
+            "user": user,
+        },
     )
 
 
 @router.get("/sources", response_class=HTMLResponse)
-def sources_page(request: Request, db: Session = Depends(get_db)):
+def sources_page(request: Request, db: Session = Depends(get_db), user=Depends(current_user)):
+    if auth_enabled() and not user:
+        return RedirectResponse("/login", status_code=302)
     rows = db.query(Source).order_by(Source.system_id, Source.id).all()
     return templates.TemplateResponse(
         "sources.html",
-        {"request": request, "sources": rows, "app_name": settings.app_name},
+        {"request": request, "sources": rows, "app_name": settings.app_name, "user": user},
     )

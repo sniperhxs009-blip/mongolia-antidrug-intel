@@ -1,0 +1,13 @@
+---
+description: 禁止自动部署；代码变更后须人工确认再推送 Render。
+alwaysApply: true
+---
+
+# 人工部署确认
+
+对本仓库 **mongolia-antidrug-intel**：
+
+1. **禁止**在未获用户明确同意时执行 `git push` 或触发 Render 部署。
+2. 修改完成后：先跑测试、生成本地汇总/源码包；然后询问用户是否推送部署。
+3. 环境变量 `REQUIRE_MANUAL_DEPLOY=true` 表示必须人工确认。
+4. 已删除自动部署规则；勿再创建 auto-deploy 自动上线逻辑。

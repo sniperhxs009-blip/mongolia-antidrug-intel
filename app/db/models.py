@@ -55,12 +55,15 @@ class IntelItem(Base):
     """结构化情报条目"""
 
     __tablename__ = "intel_items"
+    __table_args__ = (
+        # 修改原因：高频查询索引（口岸/毒品类型/告警/发布时间）
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     source_id = Column(Integer, index=True)
     system_id = Column(Integer, index=True)
     system_name = Column(String(128), default="")
-    org_name = Column(String(256), default="")
+    org_name = Column(String(256), default="", index=True)
     url = Column(String(1024), nullable=False, unique=True, index=True)
     title = Column(String(512), default="")
     title_zh = Column(String(512), default="")
@@ -72,12 +75,17 @@ class IntelItem(Base):
     published_at = Column(DateTime, nullable=True, index=True)
     crawled_at = Column(DateTime, default=datetime.utcnow, index=True)
     content_hash = Column(String(64), unique=True, index=True)
-    intel_level = Column(String(32), default="一般")  # 一般 / 关注 / 重要 / 紧急
-    category = Column(String(64), default="综合")
+    intel_level = Column(String(32), default="一般", index=True)  # 一般 / 关注 / 重要 / 紧急
+    category = Column(String(64), default="综合", index=True)
     is_alert = Column(Boolean, default=False, index=True)
     is_duplicate = Column(Boolean, default=False)
     status = Column(String(32), default="new")  # new / updated / revoked
     raw_meta = Column(Text, default="{}")
+    # 定稿新增字段
+    credibility = Column(String(16), default="中", index=True)  # 高/中/低
+    alert_kind = Column(String(64), default="", index=True)
+    port_tag = Column(String(64), default="", index=True)  # 扎门乌德/甘其毛都/其他
+    drug_type = Column(String(64), default="", index=True)
 
 
 class CrawlJob(Base):
@@ -86,9 +94,9 @@ class CrawlJob(Base):
     __tablename__ = "crawl_jobs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=datetime.utcnow, index=True)  # 修改原因：高频查询索引
     finished_at = Column(DateTime, nullable=True)
-    status = Column(String(32), default="running")
+    status = Column(String(32), default="running", index=True)
     pages_fetched = Column(Integer, default=0)
     items_new = Column(Integer, default=0)
     items_updated = Column(Integer, default=0)
@@ -196,6 +204,18 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    # SQLite 增量列（旧库兼容）
+    if settings.database_url.startswith("sqlite"):
+        with engine.begin() as conn:
+            cols = {r[1] for r in conn.exec_driver_sql("PRAGMA table_info(intel_items)").fetchall()}
+            for col, decl in (
+                ("credibility", "VARCHAR(16) DEFAULT '中'"),
+                ("alert_kind", "VARCHAR(64) DEFAULT ''"),
+                ("port_tag", "VARCHAR(64) DEFAULT ''"),
+                ("drug_type", "VARCHAR(64) DEFAULT ''"),
+            ):
+                if col not in cols:
+                    conn.exec_driver_sql(f"ALTER TABLE intel_items ADD COLUMN {col} {decl}")
     data_dir = settings.resolved_data_dir
     os.makedirs(f"{data_dir}/reports", exist_ok=True)
     os.makedirs(f"{data_dir}/raw", exist_ok=True)

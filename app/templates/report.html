@@ -18,14 +18,18 @@
       <div class="mark">禁</div>
       <div>
         <h1>情报研判报告</h1>
-        <p class="sub">报告正文为中文；外文标题已自动翻译</p>
+        <p class="sub">报告正文为中文；外文标题已自动翻译{% if hide_details %}（分级导出：细节已隐藏）{% endif %}</p>
       </div>
     </div>
-    <nav><a href="/">返回指挥台</a></nav>
+    <nav>
+      <a href="/">返回指挥台</a>
+      <a href="/reports/{{ report.id }}?hide_details=1">脱敏查看</a>
+    </nav>
   </header>
   <main class="wrap">
     <article class="panel report">
-      {{ report.content_html | safe }}
+      {# 修改原因：优先使用路由侧已清洗/加水印的 content_html，避免裸 |safe 注入未清洗内容 #}
+      {{ (content_html if content_html is defined else report.content_html) | safe }}
     </article>
   </main>
 </div>

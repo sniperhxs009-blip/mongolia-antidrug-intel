@@ -29,7 +29,7 @@ class CrawlProgress:
     report_id: Optional[int] = None
     started_at: str = field(default_factory=lambda: datetime.utcnow().isoformat())
     finished_at: Optional[str] = None
-    events: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=500))
+    events: Deque[Dict[str, Any]] = field(default_factory=lambda: deque(maxlen=200))  # 修改原因：限制 SSE 缓存防泄漏
     lock: threading.Lock = field(default_factory=threading.Lock)
 
     def snapshot(self) -> Dict[str, Any]:

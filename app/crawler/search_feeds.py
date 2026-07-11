@@ -16,6 +16,7 @@ from app.config import get_settings
 from app.crawler.filters import (
     classify_category,
     content_hash,
+    credibility_label,
     detect_lang,
     intel_level,
     is_allowed_url,
@@ -24,12 +25,13 @@ from app.crawler.filters import (
     is_mongolia_country_related,
     is_unodc_mongolia_signal,
     normalize_text,
+    title_has_strong_drug,
     translate_to_zh,
 )
 from app.crawler.http_client import build_httpx_client, pick_user_agent
 from app.db.models import IntelItem
 from config.drug_lexicon import build_search_queries
-from config.core_official import is_forbidden_url, sanitize_store_url
+from config.core_official import is_forbidden_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -95,17 +97,17 @@ class SearchFeedCollector:
             or "1y"
         )
         # 【增产修复】原缺陷：news 只取极少补盲、剔除 site:gov.mn、论坛几乎不跑
-        from config.core_official import build_core_site_search_queries, is_gov_mn_direct_url
+        from config.core_official import build_core_site_search_queries
 
         core_feeds = build_core_site_search_queries(when=when)
         lex_mode = "full" if mode == "full" else "news"
         lexicon_feeds = build_search_queries(mode=lex_mode, when=when)
         feeds = list(core_feeds) + list(lexicon_feeds)
-        forum_when = getattr(settings, "forum_when", None) or "1y"
-        if getattr(settings, "enable_forum_search", True):
+        forum_when = getattr(settings, "forum_when", None) or "30d"
+        # 修改原因：论坛默认关闭，仅手动开启
+        if getattr(settings, "enable_forum_search", False):
             from config.forum_search import build_forum_search_queries
 
-            # 论坛时间窗强制 1y，news/full 均执行
             feeds.extend(build_forum_search_queries(mode=lex_mode, when=forum_when))
         # 去重
         seen_keys: Set[str] = set()
@@ -122,11 +124,12 @@ class SearchFeedCollector:
         # 仅剔除 search_url 直连 gov.mn；保留 query 内 site:*.gov.mn 快照检索
         try:
             def _feed_ok(f: dict) -> bool:
-                su = f.get("search_url") or ""
+                # 修改原因：合规——query/url 含 gov.mn 一律剔除
                 blob = " ".join(str(f.get(k) or "") for k in ("search_url", "query", "org_name")).lower()
-                if "shturl" in blob:
+                if "shturl" in blob or "gov.mn" in blob:
                     return False
-                if su and is_gov_mn_direct_url(su):
+                su = f.get("search_url") or ""
+                if su and is_forbidden_url(su):
                     return False
                 return True
 
@@ -253,8 +256,16 @@ class SearchFeedCollector:
                 summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
                 if not title:
                     continue
+                # 修改原因：标题无强毒品词则跳过页面解析/下载，降噪减请求
+                if not title_has_strong_drug(title) and not title_has_strong_drug(summary):
+                    self.stats["items_filtered"] += 1
+                    continue
                 real_url = _resolve_google_article_url(link, client)
-                store_url = sanitize_store_url(real_url or link, link)
+                store_url = real_url or link
+                if "gov.mn" in (store_url or "").lower() or is_forbidden_url(store_url):
+                    # 修改原因：gov.mn 不入库
+                    self.stats["items_filtered"] += 1
+                    continue
                 if store_url in seen_links:
                     continue
                 seen_links.add(store_url)
@@ -310,7 +321,7 @@ class SearchFeedCollector:
                 feed=feed,
                 title=title,
                 summary=summary or title,
-                url=sanitize_store_url(link, link),
+                url=link,
                 published=published,
                 require_mongolia=bool(feed.get("require_mongolia", True)),
             )
@@ -539,9 +550,8 @@ class SearchFeedCollector:
             )
             if not article_ok:
                 continue
-            # 原缺陷：标题强制涉毒导致专题列表漏采；现：标题涉毒或含本轮检索词即可
-            title_blob = text.lower()
-            if not is_drug_related(text, loose=True) and query not in title_blob:
+            # 修改原因：站内候选必须标题含强毒品词，弱词/检索词 alone 不触发下载
+            if not title_has_strong_drug(text):
                 continue
             candidates.append((text, full))
         return candidates
@@ -615,45 +625,35 @@ class SearchFeedCollector:
         if not title:
             return
         # 短快讯：标题+摘要 ≥100 或标题本身涉毒即可（取消 250 字符门槛）
-        if len(title) + len(summary) < 100 and not is_drug_related(title, loose=True):
+        if len(title) + len(summary) < 100 and not is_drug_related(title, loose=False):
             if len(title) < 12:
                 self.stats["items_filtered"] += 1
                 return
-        url = sanitize_store_url(url or "", url or "")
-        # 允许谷歌新闻包装链；禁止未改写的 gov.mn 直链
-        if not is_allowed_url(url) and not (url or "").startswith("search://") and not (url or "").startswith("https://news.google.com"):
+        if "gov.mn" in (url or "").lower() or is_forbidden_url(url or ""):
+            self.stats["items_filtered"] += 1
+            return
+        if not is_allowed_url(url) and not (url or "").startswith("search://"):
             self.stats["items_filtered"] += 1
             return
         body = f"{title}\n{summary}"
         body_l = body.lower()
 
-        if "内蒙古" in body and "蒙古国" not in body and not any(x in body for x in ("中蒙", "扎门乌德", "甘其毛都")):
-            self.stats["items_filtered"] += 1
-            return
-        if re.search(r"\binner mongolia\b", body_l):
-            self.stats["items_filtered"] += 1
-            return
-        # 布里亚特/赤塔等：无毒品词才删（有强毒词的跨境案保留）
+        # 修改原因：内蒙古/俄边境无蒙古国正锚点一律丢弃，禁止毒品词兜底
+        if "内蒙古" in body or re.search(r"\binner mongolia\b", body_l):
+            if not is_mongolia_country_related(body):
+                self.stats["items_filtered"] += 1
+                return
         if re.search(
             r"улан[- ]?удэ|ulan[- ]?ude|buryat|бурят|乌兰乌德|布里亚特|"
             r"chita|чита|kyakhta|кяхта|забайкал|zabaikal|后贝加尔|恰克图|赤塔",
             body_l,
             flags=re.I,
         ):
-            if not is_drug_related(body, loose=True) and not re.search(
-                r"улаанбаатар|ulaanbaatar|蒙古国|монгол\s*улс|\bmongolia\b|中蒙",
-                body_l,
-                flags=re.I,
-            ):
+            if not is_mongolia_country_related(body):
                 self.stats["items_filtered"] += 1
                 return
 
-        mongolia_markers = [
-            "mongolia", "mongolian", "улаанбаатар", "ulaanbaatar",
-            "монгол улс", "монгол", "蒙古国", "乌兰巴托",
-            "chita", "чита", "kyakhta", "кяхта", "赤塔", "恰克图", "后贝加尔",
-        ]
-        has_mn = is_mongolia_country_related(body) or any(m in body_l for m in mongolia_markers)
+        has_mn = is_mongolia_country_related(body)
 
         foreign_hits = [
             "cyprus", "uzbekistan", "tajikistan", "vanuatu", "yunnan",
@@ -678,7 +678,7 @@ class SearchFeedCollector:
                 return
 
         gate = body
-        if not force_drug and not is_drug_related(gate, loose=True):
+        if not force_drug and not is_drug_related(gate, loose=False):
             self.stats["items_filtered"] += 1
             return
 
@@ -713,6 +713,13 @@ class SearchFeedCollector:
             level = level if level == "重要" else "一般"
         category = classify_category(blob)
         alert = is_critical(blob) or level == "紧急"
+        # 修改原因：入库即标注可信度/告警类别/口岸/毒品类型
+        from app.crawler.filters import alert_category, credibility_label, drug_type_from_text, port_tag_from_text
+
+        cred = credibility_label(feed.get("org_name") or "", int(feed.get("system_id") or 0), item_url)
+        akind = alert_category(blob) if alert else ""
+        ptag = port_tag_from_text(blob)
+        dtype = drug_type_from_text(blob)
 
         if existing:
             if existing.content_hash != ch:
@@ -725,6 +732,10 @@ class SearchFeedCollector:
                 existing.intel_level = level
                 existing.category = category
                 existing.is_alert = alert
+                existing.credibility = cred
+                existing.alert_kind = akind
+                existing.port_tag = ptag
+                existing.drug_type = dtype
                 existing.status = "updated"
                 existing.crawled_at = datetime.utcnow()
                 self.stats["items_updated"] += 1
@@ -751,6 +762,10 @@ class SearchFeedCollector:
             intel_level=level,
             category=category,
             is_alert=alert,
+            credibility=cred,
+            alert_kind=akind,
+            port_tag=ptag,
+            drug_type=dtype,
             status="new",
             raw_meta='{"collector":"keyword_search"}',
         )

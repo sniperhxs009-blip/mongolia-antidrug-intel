@@ -1,13 +1,13 @@
-"""
-论坛 / 社区 / 补充搜索引擎配置
-覆盖：Reddit、知乎、贴吧、药物论坛、DuckDuckGo/Bing 新闻 RSS 等
-时效由调用方传入 when（如 7d / 30d / 1y）；蒙古涉毒信源稀疏，默认宜用 1y
-
-优化说明：翻倍检索任务、延长时间窗、增加蒙古本地话题，提升论坛收录量。
-"""
 from __future__ import annotations
 
 from typing import List, Tuple
+
+from config.core_official import SEARCH_NEGATIVE_EXCLUDE
+
+"""
+论坛 / 社区 / 补充搜索引擎配置
+覆盖：Reddit、知乎、贴吧、药物论坛、DuckDuckGo/Bing 新闻 RSS 等
+"""
 
 SYSTEM_ID = 11
 SYSTEM_NAME = "全球论坛社区与补充搜索"
@@ -283,4 +283,9 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
                 "source_kind": "forum",
             })
 
+    for _task in tasks:
+        q = _task.get("query") or ""
+        if q and SEARCH_NEGATIVE_EXCLUDE.strip() not in q:
+            # 修改原因：检索层降噪，统一负面排除
+            _task["query"] = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
     return tasks

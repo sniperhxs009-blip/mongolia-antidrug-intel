@@ -268,6 +268,8 @@ class AnalysisEngine:
             f"等级分布 {dict(by_level)}。"
         )
         lines.append("")
+        lines.append(f"<!-- watermark: MN-INTEL-TRACE|{period_end.strftime('%Y%m%d')} -->")
+        lines.append("")
 
         # 将 system 8/9/10/11 的条目按主题并入七大模块，避免官方归集报告被搜索噪声冲淡
         def _bucket(it: IntelItem) -> int:
@@ -323,10 +325,20 @@ class AnalysisEngine:
                 lines.append("")
                 lines.append(f"- **发布主体**：{org}")
                 lines.append(f"- **发布时间**：{pub_s}")
+                lines.append(f"- **可信度**：{getattr(g, 'credibility', None) or '中'}")
+                if getattr(g, "port_tag", None):
+                    lines.append(f"- **口岸标签**：{g.port_tag}")
                 lines.append(f"- **核心内容**：{self._item_core(g)}")
                 lines.append(f"- **研判要点**：{self._item_judgment(g)}")
                 lines.append(f"- **原文来源**：{g.url or '（无链接）'}")
                 lines.append("")
+
+        # 修改原因：分口岸趋势独立毒情报表段落
+        try:
+            lines.append(self.port_trend_report(days=30))
+            lines.append("")
+        except Exception:
+            pass
 
         if uncategorized:
             lines.append("## 附、其他公开渠道涉蒙涉毒信息（已过滤）")
@@ -406,6 +418,24 @@ class AnalysisEngine:
         )
         return "\n".join(lines)
 
+    def port_trend_report(self, days: int = 30) -> str:
+        """分口岸趋势：扎门乌德 / 甘其毛都 / 俄蒙边境独立小节。"""
+        items = self.collect_items(days=days)
+        buckets = {
+            "扎门乌德": ["扎门乌德", "zamyn", "zamiin"],
+            "甘其毛都": ["甘其毛都", "gashuun"],
+            "俄蒙边境": ["俄蒙", "russia-mongolia", "монгол.*орос"],
+        }
+        lines = [f"## 分口岸毒情趋势（近{days}日）", ""]
+        for name, keys in buckets.items():
+            hits = [i for i in items if self._match(i, keys)]
+            lines.append(f"### {name}（{len(hits)} 条）")
+            for g in hits[:20]:
+                cred = getattr(g, "credibility", None) or "中"
+                lines.append(f"- 【可信度:{cred}】{self._item_title_zh(g)}｜{self._org_zh(g.org_name)}")
+            lines.append("")
+        return "\n".join(lines)
+
     def trend_compare_30d(self, items: Optional[List[IntelItem]] = None) -> dict:
         """近30日毒品品类、走私渠道、涉案人群简易趋势对比。"""
         items = items if items is not None else self.collect_items(days=30)
@@ -438,6 +468,7 @@ class AnalysisEngine:
             "total_items": len(items),
             "dimensions": out,
         }
+
 
     def _trend_30d_section(self, items: List[IntelItem]) -> str:
         data = self.trend_compare_30d(items)

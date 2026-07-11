@@ -1,10 +1,13 @@
+from __future__ import annotations
+
+from typing import List
+
+from config.core_official import SEARCH_NEGATIVE_EXCLUDE
+
 """
 全球主流媒体 + 国际禁毒组织/机构
 专门捕捉「境外报道蒙古国毒情」的新闻、报告与通稿
 """
-from __future__ import annotations
-
-from typing import List
 
 SYSTEM_ID = 10
 SYSTEM_NAME = "全球媒体与国际禁毒机构"
@@ -404,25 +407,7 @@ def build_global_search_queries(mode: str = "full", when: str = "") -> List[dict
             "tier": "news" if news_mode else "full",
         })
 
-    # —— 俄蒙边境缉毒专项 + 周/月历史分支 ——
-    border_ru = [
-        "Чита OR Кяхта OR Забайкальск (Монголия) (наркотик OR контрабанда OR фентанил)",
-        "Chita OR Kyakhta OR Zabaikalsk Mongolia (drug OR narcotic OR smuggling)",
-        "Монголия Россия (граница OR таможня) (наркотик OR изъятие)",
-    ]
-    for q in border_ru:
-        tasks.append({
-            "system_id": SYSTEM_ID,
-            "system_name": SYSTEM_NAME,
-            "org_name": f"俄蒙边境·{q[:20]}",
-            "query": f"{q}{when_suffix}",
-            "hl": "ru",
-            "gl": "ru",
-            "ceid": "RU:ru",
-            "engine": "google_news",
-            "require_mongolia": True,
-            "tier": "full",
-        })
+
     # 历史窗口分支（周/月），扩大覆盖
     for hist_when, label in (("7d", "近周"), ("30d", "近月")):
         if when and when != hist_when:
@@ -439,4 +424,9 @@ def build_global_search_queries(mode: str = "full", when: str = "") -> List[dict
                 "tier": "full",
             })
 
+    for _task in tasks:
+        q = _task.get("query") or ""
+        if q and SEARCH_NEGATIVE_EXCLUDE.strip() not in q:
+            # 修改原因：检索层降噪，统一负面排除
+            _task["query"] = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
     return tasks

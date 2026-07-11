@@ -60,6 +60,15 @@ class Settings(BaseSettings):
     primary_search_rounds_per_day: int = 2
     secondary_search_rounds_per_day: int = 1
 
+    # 鉴权 / 合规部署
+    auth_enabled: bool = True
+    auth_admin_user: str = "admin"
+    auth_admin_password: str = "change-admin-password"
+    auth_analyst_user: str = "analyst"
+    auth_analyst_password: str = "change-analyst-password"
+    require_manual_deploy: bool = True
+    audit_log_retention_days: int = 90
+
     smtp_host: str = "smtp.qq.com"
     smtp_port: int = 465
     smtp_use_ssl: bool = True
@@ -70,6 +79,11 @@ class Settings(BaseSettings):
     email_daily_brief_hour: int = 8
     email_daily_brief_minute: int = 0
     enable_alert_email: bool = True
+    # 分级告警邮箱（空则回退 EMAIL_TO）
+    email_alert_port: str = ""
+    email_alert_nps: str = ""
+    email_alert_joint: str = ""
+    email_alert_law: str = ""
 
     report_language: str = "zh"
     data_dir: str = ""

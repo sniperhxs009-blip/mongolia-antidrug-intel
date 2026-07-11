@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from typing import List
+from config.core_official import SEARCH_NEGATIVE_EXCLUDE
 
 # ========== 中文：传统毒品 ==========
 # 依据：蒙古国主流流通清单（大麻/安纳咖/冰毒/医用阿片外流/海洛因等）
@@ -355,6 +356,12 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
                 "tier": "news" if news_mode else "full",
             })
 
+    # 检索降噪：统一追加负面排除与蒙古锚点
+    for _i, _task in enumerate(tasks):
+        if _task.get("query"):
+            _task["query"] = _finalize_query(_task["query"], bind_mongolia=bool(_task.get("require_mongolia", True)))
+        tasks[_i] = _task
+
     # —— 全球主流媒体 + 国际禁毒机构 ——
     from config.global_media import build_global_search_queries
 
@@ -366,6 +373,11 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
 
         tasks.extend(build_forum_search_queries(mode=mode, when=when))
 
+    for _i, _task in enumerate(tasks):
+        if _task.get("query") and "site:" not in (_task.get("search_url") or ""):
+            if _task.get("engine") != "site_search":
+                _task["query"] = _finalize_query(_task["query"], bind_mongolia=bool(_task.get("require_mongolia", True)))
+        tasks[_i] = _task
     return tasks
 
 
@@ -378,3 +390,18 @@ ALERT_KEYWORDS = [
     "芬太尼", "尼秦", "异托尼他秦", "奥芬", "冰毒", "冰块", "海洛因",
     "安纳咖", "合成大麻素", "香料毒", "快乐水", "液态新型精神药物", "易制毒",
 ]
+
+
+def _finalize_query(q: str, *, bind_mongolia: bool = True) -> str:
+    """检索降噪：强制蒙古国锚点 + 负面排除语法。"""
+    q = (q or '').strip()
+    if bind_mongolia:
+        low = q.lower()
+        if not any(x in low for x in ('mongolia', 'монгол', '蒙古国', 'ulaanbaatar', 'улаанбаатар', '扎门', '甘其毛都', 'zamyn', 'gashuun')):
+            if '"蒙古国"' in q or 'Монгол' in q:
+                pass
+            else:
+                q = f'(Mongolia OR "蒙古国" OR "Монгол Улс" OR Ulaanbaatar) ({q})'
+    if SEARCH_NEGATIVE_EXCLUDE.strip() not in q:
+        q = q + SEARCH_NEGATIVE_EXCLUDE
+    return q.strip()

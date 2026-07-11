@@ -10,7 +10,7 @@ from config.drug_lexicon import (
 SOURCES = list(CORE_OFFICIAL_SOURCES)
 
 # 1年窗口：核心 site:/站内检索 + 新闻补盲
-SEARCH_FEEDS = build_core_site_search_queries("1y") + build_search_queries(mode="news", when="1y")
+SEARCH_FEEDS = build_core_site_search_queries("30d") + build_search_queries(mode="news", when="30d")
 
 DRUG_KEYWORDS = all_drug_keywords()
 CRITICAL_KEYWORDS = ALERT_KEYWORDS

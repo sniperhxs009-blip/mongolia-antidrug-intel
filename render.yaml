@@ -24,11 +24,25 @@ services:
       - key: ENABLE_SEARCH_FEEDS
         value: "true"
       - key: CRAWL_LOOSE_FILTER
+        value: "false"
+      - key: NEWS_WHEN
+        value: "30d"
+      - key: FULL_WHEN
+        value: "30d"
+      - key: FORUM_WHEN
+        value: "30d"
+      - key: ENABLE_FORUM_SEARCH
+        value: "false"
+      - key: AUTH_ENABLED
+        value: "true"
+      - key: REQUIRE_MANUAL_DEPLOY
         value: "true"
       - key: CRAWL_SSL_VERIFY
         value: "false"
       - key: CRAWL_MAX_PAGES_PER_SOURCE
-        value: "80"
+        value: "60"
+      - key: CRAWL_MAX_AGE_DAYS
+        value: "30"
       - key: TIMEZONE
         value: Asia/Ulaanbaatar
       - key: ENABLE_ALERT_EMAIL
@@ -51,5 +65,9 @@ services:
         value: "8"
       - key: EMAIL_DAILY_BRIEF_MINUTE
         value: "0"
+      - key: AUTH_ADMIN_PASSWORD
+        sync: false
+      - key: AUTH_ANALYST_PASSWORD
+        sync: false
       - key: SECRET_KEY
         generateValue: true

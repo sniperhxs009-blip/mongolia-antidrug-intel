@@ -56,21 +56,37 @@ def _host_allowed(url: str) -> bool:
 
 
 def _extract_pdf_text(data: bytes) -> str:
-    """尽量抽取 PDF 文本；无 pypdf 时做原始字节启发式解码。"""
+    """尽量抽取 PDF 文本；超大分片；恶意脚本特征直接跳过。
+
+    修改原因：PDF 安全改造——体积上限已在调用方；此处增加恶意文本检测与分片读取。
+    """
+    # 恶意/脚本载荷粗检
+    head = data[:8000].lower()
+    if b"/javascript" in head or b"/js" in head and b"action" in head or b"app:javascript" in head:
+        logger.warning("PDF malicious script marker detected, skip")
+        return ""
     try:
         from pypdf import PdfReader  # type: ignore
         import io
 
         reader = PdfReader(io.BytesIO(data))
         parts = []
-        for page in reader.pages[:80]:  # 原 40 页 → 80 页，覆盖长年报
+        # 分片：每批最多 20 页，累计字符上限 200000
+        max_chars = 200000
+        for i, page in enumerate(reader.pages[:80]):
             try:
-                parts.append(page.extract_text() or "")
+                chunk = page.extract_text() or ""
             except Exception:
                 continue
+            parts.append(chunk)
+            if sum(len(p) for p in parts) >= max_chars:
+                break
+            if i > 0 and i % 20 == 0 and not "".join(parts).strip():
+                # 连续空白页过多则提前结束，避免阻塞
+                break
         text = "\n".join(parts)
         if text.strip():
-            return text
+            return text[:20000]  # 下游再截断
     except Exception as exc:  # noqa: BLE001
         logger.debug("pypdf extract failed: %s", exc)
 
@@ -78,7 +94,7 @@ def _extract_pdf_text(data: bytes) -> str:
     try:
         raw = data.decode("latin-1", errors="ignore")
         chunks = re.findall(r"[\x20-\x7E\u0400-\u04FF\u4e00-\u9fff]{8,}", raw)
-        return "\n".join(chunks[:2000])
+        return "\n".join(chunks[:2000])[:20000]
     except Exception:
         return ""
 
@@ -213,7 +229,7 @@ class OfficialStatsCollector:
                 except Exception:
                     published = None
             body = f"{title}\n{summary}"
-            if not is_drug_related(body, loose=True):
+            if not is_drug_related(body, loose=False):
                 self.stats["items_filtered"] += 1
                 continue
             from app.crawler.filters import is_mongolia_country_related, is_unodc_mongolia_signal
@@ -308,6 +324,10 @@ class OfficialStatsCollector:
             if "pdf" not in ctype and not pdf_url.lower().endswith(".pdf"):
                 return
             data = resp.content
+            from config.official_stats import PDF_MAX_BYTES
+            if len(data) > int(PDF_MAX_BYTES or 25 * 1024 * 1024):
+                # 修改原因：超大 PDF 跳过，防内存溢出
+                return
             if len(data) < 500:
                 return
             fname = hashlib_name(pdf_url) + ".pdf"
@@ -325,7 +345,7 @@ class OfficialStatsCollector:
                     return
             # 入库判定复用宽松规则；扫描前 20000 字符
             sample = text[:20000]
-            if not is_drug_related(sample, loose=True):
+            if not is_drug_related(sample, loose=False):
                 if not re.search(
                     r"мансууруулах|хар\s*тамхи|narcotic|methamphetamine|fentanyl|毒品|涉毒|seizure",
                     text,

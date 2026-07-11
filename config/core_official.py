@@ -1,14 +1,13 @@
-"""核心数据源、黑白名单：国内裸网可直连完整官网清单 + 永久黑名单
+"""核心数据源、黑白名单（定稿合规版）。
 
-【本次全链路增产修复】
-缺陷：site:*.gov.mn 快照检索生成后，采集端曾整段剔除；直连.gov.mn仍须永久禁止。
-修改范围：扩充蒙语海关/警察专项 query；明确 is_forbidden_url 仅拦直链；
-          快照/缓存域名判定辅助函数供 filters/search_feeds 放行入库（不发起 HTTP 到 gov.mn）。
+修改原因：清除一切 site:gov.mn / 快照包装逻辑；FORBIDDEN_HOSTS 完整保留；检索追加负面排除。
 """
 from __future__ import annotations
 
 from typing import Dict, List
 from urllib.parse import urlparse
+
+
 
 # 永久黑名单（国内无法访问 / 无效短链，强制拦截）
 FORBIDDEN_HOSTS = {
@@ -35,6 +34,11 @@ FORBIDDEN_HOSTS = {
     "mongolia.gov.mn",
     "immigration.gov.mn",
 }
+SEARCH_NEGATIVE_EXCLUDE = (
+    ' -"内蒙古" -"Inner Mongolia" -乌兰乌德 -布里亚特 -赤塔 -恰克图 -后贝加尔 '
+    '-兴奋剂 -奥运会 -tobacco -cigarette -普通药品 -"medical care"'
+)
+
 FORBIDDEN_PATH_FRAGMENTS = (
     "/anti-narcotics",
     "/drug-control",
@@ -196,73 +200,16 @@ KW_MN = [
     "метамфетамин", "баривчилгаа", "гааль мансууруулах",
 ]
 
-# 仅用于 Google News/网页检索的 site:*.gov.mn 快照词（禁止直连这些域名）
-# 原缺陷：完全不检索官方公开通稿 → 统计/执法数字缺失；现仅搜索引擎快照，不发起 HTTP 到 gov.mn
-GOV_MN_SEARCH_SITES = [
-    "police.gov.mn",
-    "customs.gov.mn",
-    "gia.gov.mn",
-    "bpo.gov.mn",
-    "immigration.gov.mn",
-]
-
-
-def is_google_snapshot_or_news_url(url: str) -> bool:
-    """谷歌新闻/网页缓存/搜索结果页：可入库展示，不构成对 gov.mn 的直连。"""
-    low = (url or "").lower()
-    if not low.startswith("http"):
-        return False
-    try:
-        host = urlparse(low).netloc.lower().replace("www.", "")
-    except Exception:
-        return False
-    return (
-        host.endswith("news.google.com")
-        or host.endswith("google.com")
-        or host.endswith("googleusercontent.com")
-        or "webcache.googleusercontent.com" in host
-        or host.endswith("bing.com")
-        or host.endswith("duckduckgo.com")
-    )
-
-
-def is_gov_mn_direct_url(url: str) -> bool:
-    """是否为蒙古 .gov.mn 原始直链（禁止 HTTP 抓取）。"""
-    low = (url or "").lower().strip()
-    if not low or is_google_snapshot_or_news_url(low):
-        return False
-    try:
-        host = urlparse(low if "://" in low else f"https://{low}").netloc.lower().split(":")[0]
-        host = host.replace("www.", "")
-    except Exception:
-        return False
-    return host.endswith(".gov.mn") or host == "gov.mn"
-
-
-def sanitize_store_url(url: str, google_link: str = "") -> str:
-    """入库 URL：gov.mn 直链改写为谷歌新闻检索/原 RSS 链，永不保存可直连抓取的 gov.mn。"""
-    from urllib.parse import quote_plus
-
-    u = (url or "").strip()
-    g = (google_link or "").strip()
-    if g and is_google_snapshot_or_news_url(g):
-        if not u or is_gov_mn_direct_url(u) or is_forbidden_url(u):
-            return g
-    if u and is_gov_mn_direct_url(u):
-        # 用谷歌新闻搜索包装，前端可点开快照结果，程序不 GET gov.mn
-        return f"https://news.google.com/search?q={quote_plus(u)}&hl=en-US&gl=US&ceid=US:en"
-    return u or g
-
 
 def is_forbidden_url(url: str) -> bool:
-    """判断黑名单封禁链接：永久拦截 .gov.mn 直链与虚构路径；谷歌快照域名不在此列。"""
+    """永久拦截 .gov.mn 及虚构路径；含 gov.mn 的任何链接一律丢弃（不包装、不缓存）。"""
     low = (url or "").lower().strip()
     if not low:
         return True
-    # 谷歌/必应快照与新闻聚合页允许（非 gov.mn 直连）
-    if is_google_snapshot_or_news_url(low):
-        return False
+    if "gov.mn" in low:  # 修改原因：合规——任何含 gov.mn 直接丢弃
+        return True
     try:
+        from urllib.parse import urlparse
         host = urlparse(low if "://" in low else f"https://{low}").netloc.lower().split(":")[0]
         host = host.replace("www.", "")
     except Exception:
@@ -304,6 +251,7 @@ def build_core_site_search_queries(
             q = f"site:{domain} Mongolia ({query_core}){when_suffix}"
         else:
             q = f"site:{domain} ({query_core}){when_suffix}"
+        q = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
         tasks.append({
             "system_id": sid,
             "system_name": sname,
@@ -386,53 +334,6 @@ def build_core_site_search_queries(
                 "source_kind": "site_search",
             })
 
-    # Google 快照检索蒙古 .gov.mn（仅 query 含 site:，程序不直连；入库用谷歌包装链）
-    gov_drug_en = "(narcotic OR drug OR methamphetamine OR fentanyl OR seizure OR trafficking)"
-    gov_drug_mn = "(мансууруулах OR \"хар тамхи\" OR фентанил OR баривчилгаа OR метамфетамин)"
-    gov_drug_zh = "(毒品 OR 缉毒 OR 查获 OR 芬太尼 OR 安纳咖)"
-    for host in GOV_MN_SEARCH_SITES:
-        for tag, qcore, hl, gl, ceid, eng in (
-            ("英", gov_drug_en, "en", "us", "US:en", "google_news"),
-            ("蒙", gov_drug_mn, "mn", "mn", "MN:mn", "google_news"),
-            ("中", gov_drug_zh, "zh-CN", "cn", "CN:zh-Hans", "google_news"),
-            ("网页蒙", gov_drug_mn, "mn", "mn", "MN:mn", "web_search"),
-        ):
-            tasks.append({
-                "system_id": 8,
-                "system_name": "全国媒体与公开资讯",
-                "org_name": f"检索快照·{host}·{tag}",
-                "query": f"site:{host} {qcore}{when_suffix}",
-                "hl": hl,
-                "gl": gl,
-                "ceid": ceid,
-                "engine": eng,
-                "require_mongolia": True,
-                "tier": "primary",
-                "source_kind": "keyword_search",
-                "snapshot_only": True,
-            })
-    # 蒙语海关/警察专项（拆短句，避免谷歌截断）
-    for q, tag in (
-        (f"site:customs.gov.mn гааль мансууруулах{when_suffix}", "海关蒙语"),
-        (f"site:customs.gov.mn баривчилгаа хар тамхи{when_suffix}", "海关查获"),
-        (f"site:police.gov.mn цагдаа мансууруулах{when_suffix}", "警察蒙语"),
-        (f"site:police.gov.mn баривчилгаа фентанил{when_suffix}", "警察芬太尼"),
-        (f"site:bpo.gov.mn прокурор мансууруулах{when_suffix}", "检察蒙语"),
-    ):
-        tasks.append({
-            "system_id": 8,
-            "system_name": "全国媒体与公开资讯",
-            "org_name": f"检索快照·{tag}",
-            "query": q,
-            "hl": "mn",
-            "gl": "mn",
-            "ceid": "MN:mn",
-            "engine": "google_news",
-            "require_mongolia": True,
-            "tier": "primary",
-            "source_kind": "keyword_search",
-            "snapshot_only": True,
-        })
 
     # 蒙通社/GOGO/IKON 多语种补盲（扩大媒体检索任务量）
     media_extra = [
