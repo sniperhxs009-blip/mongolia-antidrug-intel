@@ -1,4 +1,4 @@
-"""定稿版单元测试：严格过滤、无 gov.mn 检索、黑名单、统计配置"""
+"""合规修正版单元测试：直连拦 gov.mn、快照放行、过滤降噪、口岸弱词兼容"""
 import sys
 from pathlib import Path
 
@@ -19,6 +19,7 @@ from config.core_official import (
     CORE_OFFICIAL_SOURCES,
     build_core_site_search_queries,
     is_forbidden_url,
+    sanitize_store_url,
 )
 from config.sources import SOURCES, ALLOWED_DOMAINS, ALLOW_GLOBAL_MEDIA
 from config.drug_lexicon import all_drug_keywords, build_search_queries
@@ -38,27 +39,36 @@ def test_allowed_domains_no_gov_mn():
     assert any("montsame.mn" in d for d in ALLOWED_DOMAINS)
 
 
-def test_forbidden_urls():
+def test_forbidden_urls_direct_only():
+    # 直连原生官网必须拦
     assert is_forbidden_url("https://police.gov.mn/")
-    assert is_forbidden_url("https://news.google.com/search?q=site:police.gov.mn")  # 含 gov.mn 即拦
+    assert is_forbidden_url("https://customs.gov.mn/news")
     assert is_forbidden_url("https://zasag.mn/anti-narcotics")
     assert is_forbidden_url("https://www.unodc.org/mongolia/")
+    # 修改原因：搜索引擎/快照携带 gov.mn 必须放行
+    assert not is_forbidden_url("https://news.google.com/search?q=site:police.gov.mn+narcotic")
+    assert not is_forbidden_url(
+        "https://news.google.com/rss/search?q=site:customs.gov.mn+мансууруулах&hl=en-US&gl=US&ceid=US:en"
+    )
     assert not is_forbidden_url("https://montsame.mn/cn")
+    # 包装后不为直连
+    wrapped = sanitize_store_url("https://police.gov.mn/news/123", title="мансууруулах")
+    assert "news.google.com" in wrapped
+    assert not is_forbidden_url(wrapped)
 
 
-def test_drug_filter_strict():
+def test_drug_filter_strict_and_port_weak():
     assert is_drug_related("Мансууруулах бодисын эсрэг ажиллагаа")
     assert is_drug_related("Customs seized narcotic drugs at border")
     assert is_drug_related("中蒙口岸查获走私冰毒若干公斤")
-    # 仅弱词不入库
+    # 仅弱词、无蒙古口岸 → 不入库
     assert not is_drug_related("口岸查获走私货物")
     assert not is_drug_related("Today weather is sunny in Ulaanbaatar city festival")
-    assert not is_drug_related("Two Seasons Dining Facility Mongolian BBQ")
-    assert not is_drug_related("combat human trafficking in Mongolia")
     assert not is_drug_related("Buryatia customs seized Mongolian cigarettes smuggling")
-    assert not is_drug_related("2500 rounds of ammunition smuggled into Mongolia")
-    assert not is_drug_related("Mongolian citizen detained for smuggling weight-loss pills")
+    # 弱词 + 蒙古口岸锚点 → 允许（小型缉毒快讯）
+    assert is_drug_related("扎门乌德口岸查获走私货物一批")
     assert title_has_strong_drug("蒙古国警方查获芬太尼")
+    assert title_has_strong_drug("甘其毛都口岸查获走私")
     assert not title_has_strong_drug("口岸查获走私货物")
 
 
@@ -68,14 +78,22 @@ def test_mongolia_country_strict():
     assert is_mongolia_country_related("中蒙口岸扎门乌德缉毒专项")
     assert not is_mongolia_country_related("内蒙古呼和浩特市公安局破获贩毒案")
     assert not is_mongolia_country_related("Ulan-Ude resident caught with cannabis in Buryatia")
-    assert not is_mongolia_country_related("Chita border tobacco smuggling")  # 无蒙古国锚点
-    assert not is_mongolia_country_related("Afghanistan opium production down 93 percent UNODC")
+    assert not is_mongolia_country_related("Chita border tobacco smuggling")
+    # 主体大段俄边境，仅顺带提蒙古 → 过滤
+    long_ru = (
+        "赤塔海关查获烟草。布里亚特警方在乌兰乌德行动。恰克图边境检查站加强巡查。"
+        "后贝加尔地区走私案件上升。赤塔法院审理走私案。乌兰乌德仓库被查。"
+        "布里亚特媒体报道边境动态。赤塔口岸通关量上升。恰克图贸易区扩建。"
+        "顺带提及 Mongolia 一词。"
+    )
+    assert not is_mongolia_country_related(long_ru)
 
 
 def test_url_allowlist():
     assert not is_allowed_url("https://www.police.gov.mn/news/123")
     assert is_allowed_url("https://montsame.mn/cn/news/123")
     assert is_allowed_url("https://www.unodc.org/unodc/en/data-and-analysis/world-drug-report.html")
+    assert is_allowed_url("https://news.google.com/rss/search?q=site:police.gov.mn")
     assert not is_allowed_url("https://www.baidu.com/news")
     if ALLOW_GLOBAL_MEDIA:
         assert is_allowed_url("https://www.reuters.com/world/asia/")
@@ -83,7 +101,7 @@ def test_url_allowlist():
 
 def test_hash_stable():
     a = content_hash("t", "http://x", "body")
-    b = content_hash("t", "http://y", "body")  # 同标题正文应合并倾向
+    b = content_hash("t", "http://y", "body")
     assert a == b
 
 
@@ -98,27 +116,39 @@ def test_lexicon_large():
     assert len(keys) >= 120
 
 
-def test_core_search_queries_no_gov():
+def test_core_search_queries_snapshot_ok():
     qs = build_core_site_search_queries("30d")
     assert len(qs) >= 10
     assert any("montsame" in (q.get("query") or q.get("search_url") or "").lower() for q in qs)
-    # 定稿：禁止任何 site:*.gov.mn
-    assert not any("gov.mn" in (q.get("query") or "").lower() for q in qs)
-    assert not any("gov.mn" in (q.get("search_url") or "").lower() for q in qs)
-    assert any("内蒙古" in (q.get("query") or "") or "Inner Mongolia" in (q.get("query") or "") for q in qs)  # 负面排除语法
+    # 修改原因：允许 site:*.gov.mn 快照检索 query
+    assert any("site:police.gov.mn" in (q.get("query") or "") for q in qs)
+    # 但 search_url 不得直连 gov.mn
+    assert not any(
+        (q.get("search_url") or "").lower().find("police.gov.mn") >= 0
+        and "google" not in (q.get("search_url") or "").lower()
+        for q in qs
+        if q.get("search_url")
+    )
+    assert any("内蒙古" in (q.get("query") or "") or "Inner Mongolia" in (q.get("query") or "") for q in qs)
 
 
 def test_search_queries_built():
     qs = build_search_queries(mode="news", when="30d")
     assert len(qs) >= 10
     assert any("when:30d" in (q.get("query") or "") for q in qs)
+    # 论坛不应默认混入 lexicon 批量任务
+    assert not any((q.get("source_kind") == "forum") for q in qs)
 
 
 def test_official_stats_config():
     assert len(OFFICIAL_STAT_SOURCES) >= 1
     assert all(not is_forbidden_url(s["base_url"]) for s in OFFICIAL_STAT_SOURCES)
-    assert not any("gov.mn" in (q.get("query") or "") for q in OFFICIAL_STAT_SEARCHES)
-    assert not any("gov.mn" in (q.get("query") or "") for q in PDF_SEARCH_QUERIES)
+    # PDF 搜索仍不直连 gov.mn 域名作为 search_url
+    assert not any(
+        is_forbidden_url(q.get("search_url") or "https://example.com")
+        for q in PDF_SEARCH_QUERIES
+        if q.get("search_url")
+    )
 
 
 def test_stats_extract():

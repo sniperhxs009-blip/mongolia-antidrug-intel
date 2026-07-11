@@ -32,7 +32,7 @@ class Settings(BaseSettings):
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
     )
     crawl_timeout_sec: int = 25
-    crawl_max_depth: int = 0  # 禁止递归发现栏目
+    crawl_max_depth: int = 2  # 修改原因：允许识别禁毒子栏目（深度2）
     enable_translation: bool = True
     enable_search_feeds: bool = True
     crawl_loose_filter: bool = False
@@ -44,9 +44,9 @@ class Settings(BaseSettings):
     crawl_proxy_url: str = ""
     crawl_proxy_urls: str = ""
 
-    # 硬性：不做官网递归；仅关键词检索
-    enable_official_crawl: bool = False
-    enable_core_official_in_news: bool = False
+    # 修改原因：恢复蒙通社等本土媒体站内深度抓取
+    enable_official_crawl: bool = True
+    enable_core_official_in_news: bool = True
     enable_official_stats: bool = True
     enable_forum_search: bool = False
 
@@ -55,8 +55,8 @@ class Settings(BaseSettings):
     full_when: str = "30d"
     forum_when: str = "30d"
     crawl_max_pages_official: int = 0
-    crawl_max_pages_core: int = 4  # 浅扫：每站最多页数
-    crawl_max_per_host_per_day: int = 2
+    crawl_max_pages_core: int = 8  # 修改原因：放宽核心站浅扫页数
+    crawl_max_per_host_per_day: int = 10
     primary_search_rounds_per_day: int = 2
     secondary_search_rounds_per_day: int = 1
 

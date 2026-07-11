@@ -289,12 +289,14 @@ class OfficialStatsCollector:
                 cand = m.group(1)
             if not cand.startswith("http"):
                 continue
-            # 硬性：禁止下载蒙古 .gov.mn PDF（即使搜索结果出现）
-            from config.core_official import is_forbidden_url
-            if is_forbidden_url(cand) or ".gov.mn" in cand.lower():
+            # 硬性：禁止下载蒙古 .gov.mn PDF（直连）；搜索结果里的快照链可保留元数据但不下载原生 PDF
+            from config.core_official import is_direct_forbidden_host, is_forbidden_url
+            if is_forbidden_url(cand):
+                continue
+            host = urlparse(cand).netloc.lower()
+            if is_direct_forbidden_host(host) or host.endswith(".gov.mn"):
                 continue
             if not _host_allowed(cand) and "unodc.org" not in cand and "ocindex.net" not in cand:
-                host = urlparse(cand).netloc.lower()
                 # 原缺陷：含 "gov." 即放行 → 可能直连 gov.mn；现明确排除
                 if host.endswith(".gov.mn") or host == "gov.mn":
                     continue

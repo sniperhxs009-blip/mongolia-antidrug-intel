@@ -35,7 +35,8 @@ def purge_irrelevant_items(db: Session) -> dict:
                 it.url or "",
             ]
         )
-        if is_forbidden_url(it.url or "") or "gov.mn" in (it.url or "").lower():
+        if is_forbidden_url(it.url or ""):
+            # 修改原因：仅删除原生 gov.mn 直链脏数据；快照链保留
             db.delete(it)
             deleted += 1
             continue

@@ -58,20 +58,23 @@ def run_intel_cycle(
     )
 
     if not skip_crawl:
-        # 全量模式才做全库清洗；新闻快扫跳过，避免拖慢
-        if not news_only:
-            try:
-                from app.crawler.cleanup import purge_irrelevant_items
+        # 修改原因：news/full 均执行脏数据清洗，防止俄/内蒙无关数据堆积
+        try:
+            from app.crawler.cleanup import purge_irrelevant_items, purge_noise_geo_items
 
-                purged = purge_irrelevant_items(db)
-                emit(
-                    "phase",
-                    status="running",
-                    phase="数据清洗",
-                    message=f"已清理无关条目 {purged.get('deleted', 0)} 条，保留 {purged.get('kept', 0)} 条",
-                )
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("cleanup failed: %s", exc)
+            purged = purge_irrelevant_items(db)
+            noise = purge_noise_geo_items(db)
+            emit(
+                "phase",
+                status="running",
+                phase="数据清洗",
+                message=(
+                    f"已清理无关 {purged.get('deleted', 0)} 条、"
+                    f"噪音地域 {noise.get('deleted', 0) if isinstance(noise, dict) else noise} 条"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("cleanup failed: %s", exc)
 
         if settings.enable_search_feeds:
             emit(

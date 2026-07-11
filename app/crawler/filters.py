@@ -193,42 +193,65 @@ def has_strong_drug_term(text: str) -> bool:
     return any(s.lower() in blob for s in STRONG_DRUG_TERMS)
 
 
-def is_mongolia_country_related(text: str) -> bool:
-    """严格蒙古国判定（仅用原文，不依赖翻译）。
+def has_mongolia_port_anchor(text: str) -> bool:
+    """蒙古口岸/核心城市锚点（用于弱词快讯兼容）。"""
+    tl = (text or "").lower()
+    anchors = [
+        r"扎门乌德", r"zamyn[- ]?uud", r"zamiin[- ]?uud",
+        r"甘其毛都", r"gashuun", r"gashuunsukhait",
+        r"乌兰巴托", r"ulaanbaatar", r"улаанбаатар",
+        r"蒙古国", r"монгол\s*улс", r"\bmongolia\b",
+        r"中蒙口岸", r"гааль",
+    ]
+    return any(re.search(p, tl, re.I) for p in anchors)
 
-    修改原因：俄边境/内蒙古靠毒品词兜底误放行。
-    正锚点：蒙古国 / Монгол / Ulaanbaatar / 扎门乌德 / 甘其毛都（及英文等价）。
+
+def _negative_geo_sentence_ratio(text: str) -> float:
+    """负面地域句子占比：主体大段写内蒙古/俄边境则偏高。"""
+    t = text or ""
+    parts = [p.strip() for p in re.split(r"[。！？!?\n；;]+", t) if p and len(p.strip()) >= 8]
+    if not parts:
+        return 0.0
+    neg_n = 0
+    for s in parts:
+        sl = s.lower()
+        if any(re.search(p, sl, re.I) for p in NEGATIVE_GEO_MARKERS):
+            neg_n += 1
+            continue
+        if any(x in s for x in ("内蒙古", "布里亚特", "乌兰乌德", "赤塔", "恰克图", "后贝加尔")):
+            neg_n += 1
+    return neg_n / max(len(parts), 1)
+
+
+def is_mongolia_country_related(text: str) -> bool:
+    """严格蒙古国判定（原文 + 主体占比）。
+
+    修改原因：他国新闻仅顺带提蒙古时误入库；主体>=70%为俄边境/内蒙古则丢弃。
     """
     t = text or ""
     tl = t.lower()
-    # 负面地域且无正锚点 → False
-    has_neg = any(re.search(p, tl, re.I) for p in NEGATIVE_GEO_MARKERS)
+    if "内蒙古" in t or re.search(r"\binner mongolia\b", tl):
+        if "蒙古国" not in t and not re.search(r"монгол\s*улс|\bmongolia\b|扎门乌德|甘其毛都|ulaanbaatar", tl):
+            return False
     positive = [
-        r"蒙古国",
-        r"монгол\s*улс",
-        r"\bmongolia\b",
-        r"\bmongolian\b",
-        r"ulaanbaatar",
-        r"улаанбаатар",
-        r"乌兰巴托",
-        r"扎门乌德",
-        r"zamyn[- ]?uud",
-        r"zamiin[- ]?uud",
-        r"甘其毛都",
-        r"gashuun",
-        r"gashuunsukhait",
+        r"蒙古国", r"монгол\s*улс", r"\bmongolia\b", r"\bmongolian\b",
+        r"ulaanbaatar", r"улаанбаатар", r"乌兰巴托",
+        r"扎门乌德", r"zamyn[- ]?uud", r"zamiin[- ]?uud",
+        r"甘其毛都", r"gashuun", r"gashuunsukhait",
     ]
     has_pos = any(re.search(p, tl, re.I) for p in positive)
-    # 单独「Монгол」过宽，要求与 улс/国名语境或正锚点组合；纯 Монгол 且含内蒙古仍拒
-    if "内蒙古" in t or re.search(r"\binner mongolia\b", tl):
-        return False
+    has_neg = any(re.search(p, tl, re.I) for p in NEGATIVE_GEO_MARKERS) or any(
+        x in t for x in ("内蒙古", "布里亚特", "乌兰乌德", "赤塔", "恰克图")
+    )
+    if _negative_geo_sentence_ratio(t) >= 0.70:
+        pos_hits = sum(1 for p in positive if re.search(p, tl, re.I))
+        if pos_hits <= 1:
+            return False
     if has_neg and not has_pos:
         return False
     if has_pos:
         return True
-    # 蒙文 Монгол 出现且非 өвөр монгол
     if re.search(r"(?<!өвөр\s)монгол", tl) and not re.search(r"өvөр|ovorkh|inner", tl):
-        # 仍要求毒品语境外的国别信号：海关/警察/乌兰巴托等已在 positive；此处仅 монгол улс
         if re.search(r"монгол", tl) and re.search(r"улс|улаанбаатар|гааль|цагдаа", tl):
             return True
     return False
@@ -251,10 +274,7 @@ def _has_hard_exclude(blob: str) -> bool:
 
 
 def is_drug_related(text: str, extra=None, loose: bool = False) -> bool:
-    """严格涉毒判定：默认 loose=False；仅弱词不入库。
-
-    修改原因：口岸/查获单独命中导致烟草弹药等噪音入库。
-    """
+    """涉毒判定：强词必入；弱词须搭配蒙古口岸锚点（小型缉毒快讯兼容）。"""
     blob = (text or "").lower()
     if not blob.strip():
         return False
@@ -264,15 +284,19 @@ def is_drug_related(text: str, extra=None, loose: bool = False) -> bool:
     strong = has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3))
     if strong:
         return True
-    # 弱词单独命中 → 不入库（即使 loose=True 也要求强词，定稿收紧）
-    if loose and any(w.lower() in blob for w in WEAK_DRUG_TERMS):
-        return False
+    weak = any(w.lower() in blob for w in WEAK_DRUG_TERMS)
+    # 修改原因：边境/口岸查获 + 蒙古口岸锚点 → 允许入库
+    if weak and has_mongolia_port_anchor(blob) and is_mongolia_country_related(text or ""):
+        return True
     return False
 
 
 def title_has_strong_drug(title: str) -> bool:
-    """标题前置过滤：无强毒品词则跳过下载。"""
-    return has_strong_drug_term(title or "")
+    """标题前置过滤：强毒品词，或弱词+蒙古口岸锚点。"""
+    tt = title or ""
+    if has_strong_drug_term(tt):
+        return True
+    return any(w.lower() in tt.lower() for w in WEAK_DRUG_TERMS) and has_mongolia_port_anchor(tt)
 
 
 def credibility_label(org_name: str = "", system_id: int = 0, url: str = "") -> str:
@@ -347,9 +371,8 @@ def sanitize_sensitive_text(text: str, hide_details: bool = False) -> str:
 
 
 def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
-    # 修改原因：任何 gov.mn 一律拒绝（含包装链探测）
-    low = (url or "").lower()
-    if "gov.mn" in low or is_forbidden_url(url):
+    # 修改原因：仅拦原生 gov.mn 直链；快照/媒体域名放行
+    if is_forbidden_url(url):
         return False
     try:
         host = urlparse(url).netloc.lower().split(":")[0]
@@ -367,7 +390,7 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
         base = d.replace("www.", "")
         if host == d or host_bare == base or host.endswith("." + base):
             return True
-    if host.endswith("unodc.org") or host.endswith("news.google.com"):
+    if host.endswith("unodc.org") or host.endswith("news.google.com") or "google.com" in host:
         return True
     if ALLOW_ANY_MN_DOMAIN and host.endswith(".mn") and not host.endswith(".gov.mn"):
         return True

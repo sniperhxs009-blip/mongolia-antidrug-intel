@@ -79,7 +79,13 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
         f'site:bluelight.org Mongolia (meth OR fentanyl OR cannabis OR NPS){when_suffix}',
     ]
     if news_mode:
-        reddit_queries = reddit_queries[:8]
+        # 修改原因：news 仅保留4组核心蒙语/口岸毒品词，削减闲聊噪音
+        reddit_queries = [
+            f'site:reddit.com (Ulaanbaatar OR Zamyn-Uud OR "Gashuun Sukhait") (мансууруулах OR фентанил OR метамфетамин OR "хар тамхи"){when_suffix}',
+            f'site:reddit.com Mongolia (fentanyl OR nitazene OR methamphetamine) (Ulaanbaatar OR border){when_suffix}',
+            f'site:zhihu.com 蒙古国 (芬太尼 OR 尼秦 OR 安纳咖 OR 冰毒){when_suffix}',
+            f'site:reddit.com (扎门乌德 OR 甘其毛都 OR 乌兰巴托) (毒品 OR 缉毒 OR 查获){when_suffix}',
+        ]
     for q in reddit_queries:
         tasks.append({
             "system_id": SYSTEM_ID,
@@ -118,7 +124,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
         "r/mongolia cannabis OR meth OR drugs",
     ]
     if news_mode:
-        reddit_api_qs = reddit_api_qs[:4]
+        reddit_api_qs = reddit_api_qs[:2]
     for q in reddit_api_qs:
         tasks.append({
             "system_id": SYSTEM_ID,
@@ -147,7 +153,7 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
         ("豆瓣", "site:douban.com"),
     ]
     if news_mode:
-        forum_sites = forum_sites[:6]
+        forum_sites = []  # news 模式不再批量刷论坛站
     for name, site in forum_sites:
         qs = [
             f"Mongolia ({DRUG_CORE}) {site}{when_suffix}",
@@ -288,4 +294,8 @@ def build_forum_search_queries(mode: str = "full", when: str = "1y") -> List[dic
         if q and SEARCH_NEGATIVE_EXCLUDE.strip() not in q:
             # 修改原因：检索层降噪，统一负面排除
             _task["query"] = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
+        _task["priority"] = 90
+        _task["source_kind"] = _task.get("source_kind") or "forum"
+    if news_mode:
+        tasks = tasks[:8]  # 硬顶：news 论坛任务极少
     return tasks

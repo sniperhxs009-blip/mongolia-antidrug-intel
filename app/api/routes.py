@@ -222,8 +222,9 @@ def self_check(db: Session = Depends(get_db), user=Depends(require_login)):
                     is_forbidden_url("https://police.gov.mn/news"),
                     is_forbidden_url("https://zasag.mn/anti-narcotics"),
                     not is_forbidden_url("https://montsame.mn/cn"),
+                    not is_forbidden_url("https://news.google.com/search?q=site:police.gov.mn"),
                     bool(getattr(settings, "crawl_forbid_proxy", True)),
-                    not bool(settings.enable_official_crawl),
+                    bool(settings.enable_official_crawl),
                     len(CORE_OFFICIAL_SOURCES) >= 8,
                 ]
             ),

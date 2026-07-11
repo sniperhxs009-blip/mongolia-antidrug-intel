@@ -31,7 +31,7 @@ from app.crawler.filters import (
 from app.crawler.http_client import build_httpx_client, pick_user_agent
 from app.db.models import IntelItem
 from config.drug_lexicon import build_search_queries
-from config.core_official import is_forbidden_url
+from config.core_official import is_forbidden_url, sanitize_store_url
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -57,7 +57,8 @@ def _resolve_google_article_url(link: str, client: httpx.Client) -> str:
         if key in qs and qs[key]:
             cand = unquote(qs[key][0])
             if cand.startswith("http") and "news.google.com" not in cand:
-                return cand
+                # 修改原因：解析出原生 gov.mn 时改写为快照链，禁止后续直连
+                return sanitize_store_url(cand)
     # 不做二次 HTTP 解析（太慢）；保留 Google 链，前端仍可点开
     return link
 
@@ -124,9 +125,8 @@ class SearchFeedCollector:
         # 仅剔除 search_url 直连 gov.mn；保留 query 内 site:*.gov.mn 快照检索
         try:
             def _feed_ok(f: dict) -> bool:
-                # 修改原因：合规——query/url 含 gov.mn 一律剔除
-                blob = " ".join(str(f.get(k) or "") for k in ("search_url", "query", "org_name")).lower()
-                if "shturl" in blob or "gov.mn" in blob:
+                # 修改原因：仅拦 search_url 直连 gov.mn；放行 query 内 site:*.gov.mn 快照
+                if "shturl" in " ".join(str(f.get(k) or "") for k in ("search_url", "org_name")).lower():
                     return False
                 su = f.get("search_url") or ""
                 if su and is_forbidden_url(su):
@@ -134,6 +134,24 @@ class SearchFeedCollector:
                 return True
 
             feeds = [f for f in feeds if _feed_ok(f)]
+            # 修改原因：任务权重 本土站内 > UNODC > 外媒 > 论坛
+            def _prio(f: dict) -> int:
+                if f.get("priority") is not None:
+                    return int(f["priority"])
+                eng = f.get("engine") or ""
+                kind = f.get("source_kind") or ""
+                org = (f.get("org_name") or "").lower()
+                if eng == "site_search" or kind == "site_search":
+                    return 5
+                if "unodc" in org or "unodc" in (f.get("query") or "").lower():
+                    return 20
+                if kind == "forum" or "论坛" in org or "reddit" in org:
+                    return 90
+                if kind == "gov_snapshot" or f.get("snapshot_only"):
+                    return 15
+                return 40
+
+            feeds.sort(key=_prio)
         except Exception:
             pass
 
@@ -261,9 +279,9 @@ class SearchFeedCollector:
                     self.stats["items_filtered"] += 1
                     continue
                 real_url = _resolve_google_article_url(link, client)
-                store_url = real_url or link
-                if "gov.mn" in (store_url or "").lower() or is_forbidden_url(store_url):
-                    # 修改原因：gov.mn 不入库
+                store_url = sanitize_store_url(real_url or link, title=title)
+                # 修改原因：原生 gov.mn 直链改写为快照链后入库；禁止丢弃官方快照情报
+                if is_forbidden_url(store_url):
                     self.stats["items_filtered"] += 1
                     continue
                 if store_url in seen_links:
@@ -629,7 +647,12 @@ class SearchFeedCollector:
             if len(title) < 12:
                 self.stats["items_filtered"] += 1
                 return
-        if "gov.mn" in (url or "").lower() or is_forbidden_url(url or ""):
+        if is_forbidden_url(url or ""):
+            # 修改原因：仅拦原生直链；快照包装链可入库
+            self.stats["items_filtered"] += 1
+            return
+        url = sanitize_store_url(url or "", title=title)
+        if is_forbidden_url(url):
             self.stats["items_filtered"] += 1
             return
         if not is_allowed_url(url) and not (url or "").startswith("search://"):

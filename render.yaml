@@ -23,6 +23,14 @@ services:
         value: "true"
       - key: ENABLE_SEARCH_FEEDS
         value: "true"
+      - key: CRAWL_MAX_PAGES_CORE
+        value: "8"
+      - key: CRAWL_MAX_DEPTH
+        value: "2"
+      - key: ENABLE_OFFICIAL_CRAWL
+        value: "true"
+      - key: ENABLE_CORE_OFFICIAL_IN_NEWS
+        value: "true"
       - key: CRAWL_LOOSE_FILTER
         value: "false"
       - key: NEWS_WHEN

@@ -367,11 +367,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
 
     tasks.extend(build_global_search_queries(mode=mode, when=when))
 
-    # —— Reddit / 论坛 / DuckDuckGo / Bing 补充搜索 ——
-    if when:  # 论坛类必须带时效
-        from config.forum_search import build_forum_search_queries
-
-        tasks.extend(build_forum_search_queries(mode=mode, when=when))
+    # 修改原因：论坛任务不在此批量生成；仅 search_feeds 在 enable_forum_search=true 时追加
 
     for _i, _task in enumerate(tasks):
         if _task.get("query") and "site:" not in (_task.get("search_url") or ""):
@@ -393,15 +389,21 @@ ALERT_KEYWORDS = [
 
 
 def _finalize_query(q: str, *, bind_mongolia: bool = True) -> str:
-    """检索降噪：强制蒙古国锚点 + 负面排除语法。"""
+    """检索降噪：强制高精准地域锚点 + 负面排除（弱化宽泛 Mongolia 单关键词）。"""
     q = (q or '').strip()
     if bind_mongolia:
         low = q.lower()
-        if not any(x in low for x in ('mongolia', 'монгол', '蒙古国', 'ulaanbaatar', 'улаанбаатар', '扎门', '甘其毛都', 'zamyn', 'gashuun')):
-            if '"蒙古国"' in q or 'Монгол' in q:
-                pass
-            else:
-                q = f'(Mongolia OR "蒙古国" OR "Монгол Улс" OR Ulaanbaatar) ({q})'
+        precise = (
+            'ulaanbaatar', 'улаанбаатар', '乌兰巴托',
+            '扎门', 'zamyn', 'zamiin', '甘其毛都', 'gashuun',
+            '蒙古国', 'монгол улс',
+        )
+        if not any(x in low for x in precise):
+            # 修改原因：强制绑定口岸/首都锚点，减少全球无关毒品新闻
+            q = (
+                f'(Ulaanbaatar OR "乌兰巴托" OR "扎门乌德" OR Zamyn-Uud OR '
+                f'"甘其毛都" OR "Gashuun Sukhait" OR "蒙古国" OR "Монгол Улс") ({q})'
+            )
     if SEARCH_NEGATIVE_EXCLUDE.strip() not in q:
         q = q + SEARCH_NEGATIVE_EXCLUDE
     return q.strip()
