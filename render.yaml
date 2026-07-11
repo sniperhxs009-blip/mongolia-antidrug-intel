@@ -46,7 +46,7 @@ services:
       - key: AUTH_ENABLED
         value: "true"
       - key: REQUIRE_MANUAL_DEPLOY
-        value: "true"
+        value: "false"
       - key: CRAWL_SSL_VERIFY
         value: "false"
       - key: CRAWL_MAX_PAGES_PER_SOURCE
