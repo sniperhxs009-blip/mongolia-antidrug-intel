@@ -73,6 +73,15 @@ NEGATIVE_GEO_MARKERS = [
     r"境内管控", r"省内禁毒", r"全市禁毒宣传", r"禁毒宣传月",
     r"呼和浩特", r"二连浩特", r"满洲里", r"包头市", r"锡林郭勒",
 ]
+# 修改原因：蒙语官方机构词汇，无中文「蒙古国」也判定有效
+MN_OFFICIAL_GEO_MARKERS = (
+    "цагдаа", "гааль", "монгол улс", "улаанбаатар", "хил",
+    "баривчилгаа", "гаалийн", "цагдаагийн", "улсын", "засгийн газар",
+)
+GOV_WEAK_DRUG_MARKERS = (
+    "цагдаа", "гааль", "баривчилгаа", "хил", "хураан", "customs", "police",
+    "seizure", "smuggling", "border", "口岸", "海关", "警察", "缉毒", "查获",
+)
 # 国内口岸弱词：无蒙古锚点不得单独入库
 DOMESTIC_CN_PORT_MARKERS = (
     "二连浩特", "满洲里", "二连", "呼和浩特", "包头", "锡林郭勒", "呼伦贝尔",
@@ -164,10 +173,15 @@ def translate_to_zh(
 
 
 def _local_gloss(text: str) -> str:
+    # 修改原因：翻译熔断后保留蒙古官方机构蒙英词汇锚点，避免地域判定误删
     rep = [
         ("Mongolia", "蒙古国"), ("Ulaanbaatar", "乌兰巴托"), ("drug", "毒品"),
         ("narcotic", "麻醉品"), ("fentanyl", "芬太尼"), ("methamphetamine", "冰毒"),
         ("heroin", "海洛因"), ("cannabis", "大麻"),
+        ("цагдаа", "警察"), ("гааль", "海关"), ("монгол улс", "蒙古国"),
+        ("баривчилгаа", "查获"), ("хил", "边境"), ("мансууруулах", "禁毒"),
+        ("хар тамхи", "毒品"), ("улаанбаатар", "乌兰巴托"),
+        ("immigration", "移民"), ("customs", "海关"), ("police", "警察"),
     ]
     res = text
     for en, cn in rep:
@@ -281,6 +295,9 @@ def is_mongolia_country_related(text: str) -> bool:
     """
     t = text or ""
     tl = t.lower()
+    # 修改原因：仅蒙语官方词汇（цагдаа/гааль/монгол улс）无中文也判定蒙古相关
+    if any(m in tl for m in MN_OFFICIAL_GEO_MARKERS):
+        return True
     # 修改原因：仅标题含蒙古国、正文无口岸/城市/机构 → 丢弃
     if _title_only_mongolia_hook(t):
         return False
@@ -332,13 +349,16 @@ def _has_hard_exclude(blob: str) -> bool:
     return False
 
 
-def is_drug_related(text: str, extra=None, loose: bool = False) -> bool:
+def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bool = False) -> bool:
     """涉毒判定：强词必入；弱词须搭配蒙古口岸锚点（小型缉毒快讯兼容）。"""
     blob = (text or "").lower()
     if not blob.strip():
         return False
     if _has_hard_exclude(blob):
         return False
+    # 修改原因：gov 快照来源仅口岸/缉毒弱词即可入库，无需强毒品词
+    if gov_snapshot and any(w in blob for w in GOV_WEAK_DRUG_MARKERS):
+        return True
     extras = [str(x).lower() for x in (extra or []) if x]
     strong = has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3))
     if strong:

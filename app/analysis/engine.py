@@ -276,19 +276,27 @@ class AnalysisEngine:
             sid = it.system_id or 0
             org_l = (it.org_name or "").lower()
             url_l = (it.url or "").lower()
-            # 修改原因：gov.mn 快照情报强制归入蒙古官方体系 1/2/3/4
-            if "快照·" in (it.org_name or "") or "gov_snapshot" in (it.raw_meta or ""):
+            # 修改原因：所有 site:gov.mn / 快照情报强制归入七大官方体系，不落杂项
+            is_snap = (
+                "快照·" in (it.org_name or "")
+                or "gov_snapshot" in (it.raw_meta or "")
+                or "site:police.gov.mn" in url_l
+                or "site:customs.gov.mn" in url_l
+                or "site:health.gov.mn" in url_l
+                or "site:mmra.gov.mn" in url_l
+                or "site:zasag.mn" in url_l
+                or "site:immigration.gov.mn" in url_l
+            )
+            if is_snap:
                 if "police.gov.mn" in org_l or "police.gov.mn" in url_l or "цагдаа" in org_l:
                     return 2
-                if any(x in org_l for x in ("customs.gov.mn", "bpo.gov.mn")) or "гааль" in org_l:
+                if any(x in org_l + url_l for x in ("customs.gov.mn", "immigration.gov.mn", "bpo.gov.mn")) or "гааль" in org_l:
                     return 4
-                if any(x in org_l for x in ("health.gov.mn", "mmra.gov.mn", "moh")):
+                if any(x in org_l + url_l for x in ("health.gov.mn", "mmra.gov.mn", "moh")):
                     return 3
+                if "zasag.mn" in org_l or "zasag.mn" in url_l or "mongolia.gov.mn" in org_l:
+                    return 1
                 return 1
-            if "site:police.gov.mn" in url_l or ("police" in org_l and "快照" in org_l):
-                return 2
-            if "site:customs.gov.mn" in url_l or ("customs" in org_l and "快照" in org_l):
-                return 4
             if sid in (1, 2, 3, 4, 5, 6, 7):
                 return sid
             if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border", "扎门", "甘其毛都", "跨境"]):
@@ -306,11 +314,13 @@ class AnalysisEngine:
             return 8  # 暂存未归类
 
         def _report_sort_key(it: IntelItem) -> tuple:
-            """修改原因：蒙古官方情报置顶，国内中文资讯后置。"""
+            """修改原因：gov 官方快照置顶，蒙古媒体次之，国内中文资讯置末。"""
             org = (it.org_name or "").lower()
-            is_gov_snap = "快照" in (it.org_name or "") or "gov.mn" in (it.url or "")
+            is_gov_snap = "快照" in (it.org_name or "") or "gov.mn" in (it.url or "") or "zasag.mn" in (it.url or "")
+            is_mn_media = any(x in org for x in ("montsame", "gogo", "ikon", "news.mn", "蒙通社", "媒体补盲", "站内"))
             is_domestic_cn = any(x in org for x in ("新华网", "禁毒网", "nncc", "news.cn", "内蒙古"))
-            return (1 if is_gov_snap else 2, 2 if is_domestic_cn else 1, -(it.published_at or it.crawled_at or datetime.utcnow()).timestamp())
+            tier = 1 if is_gov_snap else (2 if is_mn_media else 3)
+            return (tier, 4 if is_domestic_cn else 1, -(it.published_at or it.crawled_at or datetime.utcnow()).timestamp())
 
         module_items: Dict[int, List[IntelItem]] = defaultdict(list)
         uncategorized: List[IntelItem] = []

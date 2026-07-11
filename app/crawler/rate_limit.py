@@ -66,6 +66,21 @@ def _limit_for_host(host: str) -> int:
     return min(base, 10)
 
 
+def is_domestic_cn_host(host: str) -> bool:
+    """国内中文媒体域名识别（修改原因：配额调度后置）。"""
+    h = (host or "").replace("www.", "")
+    domestic_cn = ("news.cn", "xinhuanet.com", "nncc626.com", "nmg.110.gov.cn")
+    return any(h == s or h.endswith("." + s) for s in domestic_cn)
+
+
+def should_defer_low_priority(priority: int, pages_used: int, budget_total: int) -> bool:
+    """修改原因：国内低优先级任务仅在高优先级消耗额度后才执行。"""
+    if priority < 75:
+        return False
+    reserve = max(8, int(budget_total * 0.55))
+    return pages_used < reserve
+
+
 def _load(db: Session) -> Dict[str, dict]:
     row = db.query(SystemSetting).filter(SystemSetting.key == KEY).first()
     if not row or not row.value:

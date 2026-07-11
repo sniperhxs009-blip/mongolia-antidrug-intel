@@ -37,6 +37,50 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 ProgressCallback = Optional[Callable[..., None]]
 
+# 修改原因：gov 快照短通告弱词门槛（无强毒品词也可入库）
+GOV_WEAK_TERMS = (
+    "цагдаа", "гааль", "баривчилгаа", "хил", "хураан", "customs", "police",
+    "seizure", "smuggling", "border", "口岸", "海关", "警察", "缉毒", "查获",
+    "мансууруулах", "гаалийн", "цагдаагийн",
+)
+
+
+def _feed_is_gov_snapshot(feed: dict) -> bool:
+    org = feed.get("org_name") or ""
+    return (
+        feed.get("source_kind") == "gov_snapshot"
+        or feed.get("snapshot_only")
+        or "快照·" in org
+    )
+
+
+def _gov_weak_signal(title: str, summary: str) -> bool:
+    blob = f"{title} {summary}".lower()
+    return any(t in blob for t in GOV_WEAK_TERMS)
+
+
+def _feed_priority(feed: dict) -> int:
+    """修改原因：数值越小越优先；强制覆盖任务内嵌 priority，修复排序写反 BUG。"""
+    eng = feed.get("engine") or ""
+    kind = feed.get("source_kind") or ""
+    org = (feed.get("org_name") or "").lower()
+    q = (feed.get("query") or "").lower()
+    if kind == "gov_snapshot" or feed.get("snapshot_only") or "快照·" in org:
+        return 5
+    if eng == "site_search" or kind == "site_search":
+        return 10
+    if "unodc" in org or "unodc" in q:
+        return 20
+    if kind == "forum" or "论坛" in org or "reddit" in org:
+        return 99
+    if any(x in q for x in ("nncc626", "news.cn", "xinhuanet", "新华网", "禁毒网", "中国禁毒")):
+        return 75
+    if any(x in org for x in ("新华网", "禁毒网", "中国禁毒", "nncc", "检索·中国禁毒")):
+        return 75
+    if any(x in org for x in ("montsame", "gogo", "ikon", "news.mn", "蒙通社", "媒体补盲", "站内")):
+        return 10
+    return 40
+
 
 def _google_news_url(query: str, hl: str, gl: str, ceid: str) -> str:
     # 修改原因：破除默认20条上限，单次RSS拉取100条
@@ -59,7 +103,10 @@ def _resolve_google_article_url(link: str, client: httpx.Client) -> str:
             cand = unquote(qs[key][0])
             if cand.startswith("http") and "news.google.com" not in cand:
                 # 修改原因：解析出原生 gov.mn 时改写为快照链，禁止后续直连
-                return sanitize_store_url(cand)
+                return sanitize_store_url(cand, title="")
+    # 修改原因：链接文本含 gov.mn 片段也转快照，修复漏判
+    if re.search(r"[\w-]+\.gov\.mn|zasag\.mn|immigration\.gov\.mn", link, re.I):
+        return sanitize_store_url(link, title="")
     # 不做二次 HTTP 解析（太慢）；保留 Google 链，前端仍可点开
     return link
 
@@ -76,6 +123,10 @@ class SearchFeedCollector:
             "error_count": 0,
         }
         self._seen_urls: Set[str] = set()
+        # 修改原因：高优先级先消耗页数额度，国内任务后置
+        self._page_budget = int(getattr(settings, "crawl_max_pages_per_source", 60) or 60)
+        self._pages_consumed = 0
+        self._feeds_high_done = 0
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         if not self.on_event:
@@ -136,31 +187,14 @@ class SearchFeedCollector:
                 return True
 
             feeds = [f for f in feeds if _feed_ok(f)]
-            # 修改原因：严格执行蒙古>gov快照>UNODC>外媒>国内中文>论坛 优先级
-            def _prio(f: dict) -> int:
-                if f.get("priority") is not None:
-                    return int(f["priority"])
-                eng = f.get("engine") or ""
-                kind = f.get("source_kind") or ""
-                org = (f.get("org_name") or "").lower()
-                q = (f.get("query") or "").lower()
-                if eng == "site_search" or kind == "site_search":
-                    return 5
-                if kind == "gov_snapshot" or f.get("snapshot_only") or "快照·" in org:
-                    return 15
-                if "unodc" in org or "unodc" in q:
-                    return 20
-                if kind == "forum" or "论坛" in org or "reddit" in org:
-                    return 99
-                if any(x in q for x in ("nncc626", "news.cn", "xinhuanet", "新华网", "禁毒网", "中国禁毒")):
-                    return 70
-                if any(x in org for x in ("新华网", "禁毒网", "中国禁毒", "nncc")):
-                    return 70
-                return 40
-
-            feeds.sort(key=_prio)
+            # 修改原因：强制按 _feed_priority 升序，gov 快照最先执行
+            feeds.sort(key=_feed_priority)
+            high = [f for f in feeds if _feed_priority(f) < 75]
+            low = [f for f in feeds if _feed_priority(f) >= 75]
+            feeds = high + low
+            high_feed_total = len(high)
         except Exception:
-            pass
+            high_feed_total = 0
 
         total = len(feeds)
         self._emit(
@@ -180,6 +214,24 @@ class SearchFeedCollector:
             for idx, feed in enumerate(feeds, start=1):
                 org = feed["org_name"]
                 engine = feed.get("engine") or "google_news"
+                prio = _feed_priority(feed)
+                # 修改原因：国内任务后置，且仅在蒙古渠道消耗额度后才分配剩余页数
+                if prio >= 75:
+                    if self._feeds_high_done < high_feed_total:
+                        continue
+                    reserve = max(8, int(self._page_budget * 0.55))
+                    if self._pages_consumed >= reserve:
+                        self._emit(
+                            "source_skip",
+                            current_org=org,
+                            message=(
+                                f"跳过国内任务（页数额度已优先供给蒙古渠道 "
+                                f"{self._pages_consumed}/{self._page_budget}）"
+                            ),
+                        )
+                        continue
+                else:
+                    self._feeds_high_done += 1
                 self._emit(
                     "source_start",
                     current_index=idx,
@@ -217,6 +269,14 @@ class SearchFeedCollector:
                         pass
                     logger.warning("搜索失败 %s: %s", org, exc)
                     self._emit("source_error", current_org=org, message=f"失败：{org} — {exc}")
+                else:
+                    # 修改原因：统计页数消耗，供国内任务后置调度
+                    if engine in ("google_news", "bing_news", "ddg_news", "web_search"):
+                        self._pages_consumed += 15
+                    elif engine == "site_search":
+                        self._pages_consumed += 8
+                    elif engine == "reddit_search":
+                        self._pages_consumed += 5
                 self._emit(
                     "source_done",
                     current_index=idx,
@@ -281,12 +341,17 @@ class SearchFeedCollector:
                 summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
                 if not title:
                     continue
-                # 修改原因：标题无强毒品词则跳过页面解析/下载，降噪减请求
+                is_gov = _feed_is_gov_snapshot(feed)
+                # 修改原因：gov 快照放宽标题过滤，口岸/警察/海关弱词即可通过
                 if not title_has_strong_drug(title) and not title_has_strong_drug(summary):
-                    self.stats["items_filtered"] += 1
-                    continue
+                    if not (is_gov and _gov_weak_signal(title, summary)):
+                        self.stats["items_filtered"] += 1
+                        continue
                 real_url = _resolve_google_article_url(link, client)
                 store_url = sanitize_store_url(real_url or link, title=title)
+                # 修改原因：RSS 链接本身含 gov.mn 片段也转快照
+                if re.search(r"[\w-]+\.gov\.mn|zasag\.mn", (real_url or link or ""), re.I):
+                    store_url = sanitize_store_url(real_url or link, title=title)
                 # 修改原因：原生 gov.mn 直链改写为快照链后入库；禁止丢弃官方快照情报
                 if is_forbidden_url(store_url):
                     self.stats["items_filtered"] += 1
@@ -312,7 +377,7 @@ class SearchFeedCollector:
                     url=store_url,
                     published=published,
                     require_mongolia=bool(feed.get("require_mongolia", True)),
-                    force_drug=False,
+                    force_drug=is_gov,
                 )
             if page > 0 and new_on_page == 0:
                 break
@@ -723,7 +788,10 @@ class SearchFeedCollector:
                 return
 
         gate = body
-        if not force_drug and not is_drug_related(gate, loose=False):
+        is_gov_src = _feed_is_gov_snapshot(feed)
+        if not force_drug and not is_drug_related(
+            gate, loose=False, gov_snapshot=is_gov_src
+        ):
             self.stats["items_filtered"] += 1
             return
 
@@ -812,7 +880,9 @@ class SearchFeedCollector:
             port_tag=ptag,
             drug_type=dtype,
             status="new",
-            raw_meta='{"collector":"keyword_search"}',
+            raw_meta='{"collector":"keyword_search","gov_snapshot":%s}' % (
+                "true" if is_gov_src else "false"
+            ),
         )
         self.db.add(row)
         self.db.flush()

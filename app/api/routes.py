@@ -290,7 +290,7 @@ def list_stat_records(db: Session = Depends(get_db), limit: int = 50, user=Depen
 @router.get("/api/intel")
 def list_intel(
     db: Session = Depends(get_db),
-    limit: int = 50,
+    limit: int = 80,
     system_id: Optional[int] = None,
     alert_only: bool = False,
     since_id: Optional[int] = None,

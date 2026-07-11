@@ -150,6 +150,24 @@ def run_intel_cycle(
 
     # 新闻快扫：不生成报告、不发日简报；仅对新告警发邮件
     if news_only:
+        # 修改原因：news 模式采集完成后执行脏数据清洗，释放条目名额给蒙古官方情报
+        try:
+            from app.crawler.cleanup import purge_irrelevant_items, purge_noise_geo_items
+
+            purged_post = purge_irrelevant_items(db)
+            noise_post = purge_noise_geo_items(db)
+            emit(
+                "phase",
+                status="running",
+                phase="采集后清洗",
+                message=(
+                    f"新闻模式已清理无关 {purged_post.get('deleted', 0)} 条、"
+                    f"噪音地域 {noise_post.get('deleted', 0) if isinstance(noise_post, dict) else noise_post} 条"
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("post-crawl cleanup failed: %s", exc)
+
         mailer = EmailService(db)
         since = datetime.utcnow() - timedelta(hours=3)
         alert_items = (
@@ -182,6 +200,15 @@ def run_intel_cycle(
         return result
 
     emit("phase", status="analyzing", phase="交叉研判", message="正在生成情报研判报告…")
+    # 修改原因：full 模式采集完成后同样执行脏数据清洗
+    try:
+        from app.crawler.cleanup import purge_irrelevant_items, purge_noise_geo_items
+
+        purge_irrelevant_items(db)
+        purge_noise_geo_items(db)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("post-crawl cleanup failed: %s", exc)
+
     analyzer = AnalysisEngine(db)
     report = analyzer.generate_report(report_type=report_type)
     result["report_id"] = report.id

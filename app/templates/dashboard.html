@@ -359,7 +359,7 @@
     try {
       const url = maxSeenId > 0
         ? `/api/intel?since_id=${maxSeenId}&limit=50`
-        : '/api/intel?limit=20';
+        : '/api/intel?limit=80';
       const rows = await fetch(url).then(r => r.json());
       if (Array.isArray(rows) && rows.length) {
         const ordered = [...rows].sort((a, b) => a.id - b.id);

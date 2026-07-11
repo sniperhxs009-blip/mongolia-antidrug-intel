@@ -381,7 +381,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
             "engine": "google_news",
             "require_mongolia": True,
             "tier": "news" if news_mode else "full",
-            "priority": 70,
+            "priority": 75,
         })
 
     # 修改原因：论坛任务不在此批量生成；仅 search_feeds 在 enable_forum_search=true 时追加
