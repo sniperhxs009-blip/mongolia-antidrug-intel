@@ -321,12 +321,16 @@ def build_core_site_search_queries(
         org = source.get("org_name") or domain
         if "unodc.org" in domain:
             q = f"site:unodc.org Mongolia ({query_core}){when_suffix}"
+            prio = 20
         elif domain.endswith("nncc626.com") or "news.cn" in domain or "xinhuanet" in domain:
             q = f"site:{domain} (蒙古国 OR 中蒙 OR 扎门乌德 OR 甘其毛都) ({query_core}){when_suffix}"
+            prio = 70  # 修改原因：国内中文媒体后置低优先级
         elif "cgtn.com" in domain or "akipress.com" in domain:
             q = f"site:{domain} Mongolia ({query_core}){when_suffix}"
+            prio = 40
         else:
             q = f"site:{domain} ({query_core}){when_suffix}"
+            prio = 10 if any(x in domain for x in ("montsame", "gogo", "ikon", "news.mn")) else 20
         q = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
         tasks.append({
             "system_id": sid,
@@ -340,10 +344,15 @@ def build_core_site_search_queries(
             "require_mongolia": True,
             "tier": source.get("tier") or "primary",
             "source_kind": "keyword_search",
-            "priority": 10 if "montsame" in domain or "gogo" in domain else 20,
+            "priority": prio,
         })
 
-    for source in CORE_OFFICIAL_SOURCES:
+    # 修改原因：先生成蒙古本土/国际源，国内中文源最后生成避免额度耗尽
+    cn_domains = ("nncc626.com", "news.cn", "xinhuanet.com")
+    non_cn_sources = [s for s in CORE_OFFICIAL_SOURCES if not any(d in s["base_url"] for d in cn_domains)]
+    cn_sources = [s for s in CORE_OFFICIAL_SOURCES if any(d in s["base_url"] for d in cn_domains)]
+
+    for source in non_cn_sources:
         domain = (
             source["base_url"]
             .replace("https://", "")
@@ -365,8 +374,37 @@ def build_core_site_search_queries(
         else:
             _task(source, domain_bare, en_or, "en", "us", "US:en", "英文")
 
-    # 站内搜索：覆盖清单内蒙古媒体（每站少量高价值词）
-    site_kw_mn = KW_MN[:3]
+    # 修改原因：恢复 site:*.gov.mn 快照检索（8组，仅走 Google News，不直连官网）
+    gov_snapshot_hosts = [
+        ("police.gov.mn", "баривчилгаа OR цагдаа OR мансууруулах OR narcotic", 2),
+        ("police.gov.mn", "фентанил OR метамфетамин OR хар тамхи OR seizure", 2),
+        ("customs.gov.mn", "гааль OR мансууруулах OR seizure OR smuggling", 4),
+        ("customs.gov.mn", "хил OR прекурсор OR border OR trafficking", 4),
+        ("health.gov.mn", "мансууруулах OR сэтгэц OR prescription OR narcotic", 3),
+        ("mmra.gov.mn", "мансууруулах OR прекурсор OR pharmaceutical", 3),
+        ("mongolia.gov.mn", "мансууруулах OR хар тамхи OR anti-drug", 1),
+        ("bpo.gov.mn", "хил OR мансууруулах OR border OR narcotic", 4),
+    ]
+    for host, qcore, sys_id in gov_snapshot_hosts:
+        sys_names = {1: "国家级禁毒统筹协调机构", 2: "执法缉毒与刑事司法体系", 3: "行业监管与麻精药品体系", 4: "边境口岸缉毒查验体系"}
+        tasks.append({
+            "system_id": sys_id,
+            "system_name": sys_names.get(sys_id, "国家级禁毒统筹协调机构"),
+            "org_name": f"快照·{host}",
+            "query": f"site:{host} ({qcore}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
+            "hl": "en",
+            "gl": "us",
+            "ceid": "US:en",
+            "engine": "google_news",
+            "require_mongolia": True,
+            "tier": "primary",
+            "source_kind": "gov_snapshot",
+            "snapshot_only": True,
+            "priority": 15,
+        })
+
+    # 站内搜索：蒙古本土媒体（最高优先级）
+    site_kw_mn = KW_MN[:6]
     site_kw_zh = KW_ZH[:3]
     site_kw_en = ["narcotics", "fentanyl", "drug seizure"]
     for path, kws, lang in (
@@ -413,31 +451,7 @@ def build_core_site_search_queries(
                 "priority": 5,
             })
 
-    # 修改原因：恢复 site:*.gov.mn 快照检索（仅走 Google News，不直连官网）
-    gov_snapshot_hosts = [
-        ("police.gov.mn", "баривчилгаа OR мансууруулах OR фентанил OR narcotic"),
-        ("customs.gov.mn", "гааль OR мансууруулах OR seizure OR smuggling"),
-        ("mmra.gov.mn", "мансууруулах OR прекурсор OR narcotic"),
-        ("mongolia.gov.mn", "мансууруулах OR хар тамхи OR anti-drug"),
-    ]
-    for host, qcore in gov_snapshot_hosts:
-        tasks.append({
-            "system_id": 1,
-            "system_name": "国家级禁毒统筹协调机构",
-            "org_name": f"快照·{host}",
-            "query": f"site:{host} ({qcore}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
-            "hl": "en",
-            "gl": "us",
-            "ceid": "US:en",
-            "engine": "google_news",
-            "require_mongolia": True,
-            "tier": "primary",
-            "source_kind": "gov_snapshot",
-            "snapshot_only": True,
-            "priority": 15,
-        })
-
-    # 蒙通社/GOGO/IKON 多语种补盲（扩大媒体检索任务量）
+    # 蒙通社/GOGO/IKON 多语种补盲
     media_extra = [
         ("montsame.mn", "毒品 OR 缉毒 OR 芬太尼 OR 安纳咖", "zh-CN", "cn", "CN:zh-Hans"),
         ("montsame.mn", "narcotic OR fentanyl OR methamphetamine OR seizure", "en", "us", "US:en"),
@@ -461,4 +475,17 @@ def build_core_site_search_queries(
             "source_kind": "keyword_search",
             "priority": 10,
         })
+
+    # 国内中文媒体检索最后生成（低优先级）
+    for source in cn_sources:
+        domain = (
+            source["base_url"]
+            .replace("https://", "")
+            .replace("http://", "")
+            .rstrip("/")
+        )
+        domain_bare = domain[4:] if domain.startswith("www.") else domain
+        _task(source, domain_bare, zh_or, "zh-CN", "cn", "CN:zh-Hans", "中文")
+
+    tasks.sort(key=lambda x: x.get("priority", 50))
     return tasks

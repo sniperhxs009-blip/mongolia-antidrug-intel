@@ -274,6 +274,21 @@ class AnalysisEngine:
         # 将 system 8/9/10/11 的条目按主题并入七大模块，避免官方归集报告被搜索噪声冲淡
         def _bucket(it: IntelItem) -> int:
             sid = it.system_id or 0
+            org_l = (it.org_name or "").lower()
+            url_l = (it.url or "").lower()
+            # 修改原因：gov.mn 快照情报强制归入蒙古官方体系 1/2/3/4
+            if "快照·" in (it.org_name or "") or "gov_snapshot" in (it.raw_meta or ""):
+                if "police.gov.mn" in org_l or "police.gov.mn" in url_l or "цагдаа" in org_l:
+                    return 2
+                if any(x in org_l for x in ("customs.gov.mn", "bpo.gov.mn")) or "гааль" in org_l:
+                    return 4
+                if any(x in org_l for x in ("health.gov.mn", "mmra.gov.mn", "moh")):
+                    return 3
+                return 1
+            if "site:police.gov.mn" in url_l or ("police" in org_l and "快照" in org_l):
+                return 2
+            if "site:customs.gov.mn" in url_l or ("customs" in org_l and "快照" in org_l):
+                return 4
             if sid in (1, 2, 3, 4, 5, 6, 7):
                 return sid
             if self._match(it, ["海关", "口岸", "边境", "гааль", "хил", "customs", "border", "扎门", "甘其毛都", "跨境"]):
@@ -286,9 +301,16 @@ class AnalysisEngine:
                 return 3
             if self._match(it, ["警察", "检察院", "缉毒", "цагдаа", "баривчилгаа", "prosecutor", "统计", "同比"]):
                 return 2
-            if self._match(it, ["委员会", "政府", "zasag", "gov.mn", "协调"]):
+            if self._match(it, ["委员会", "政府", "zasag", "gov.mn", "协调", "快照"]):
                 return 1
             return 8  # 暂存未归类
+
+        def _report_sort_key(it: IntelItem) -> tuple:
+            """修改原因：蒙古官方情报置顶，国内中文资讯后置。"""
+            org = (it.org_name or "").lower()
+            is_gov_snap = "快照" in (it.org_name or "") or "gov.mn" in (it.url or "")
+            is_domestic_cn = any(x in org for x in ("新华网", "禁毒网", "nncc", "news.cn", "内蒙古"))
+            return (1 if is_gov_snap else 2, 2 if is_domestic_cn else 1, -(it.published_at or it.crawled_at or datetime.utcnow()).timestamp())
 
         module_items: Dict[int, List[IntelItem]] = defaultdict(list)
         uncategorized: List[IntelItem] = []
@@ -309,7 +331,7 @@ class AnalysisEngine:
                     continue
                 seen.add(g.id)
                 uniq.append(g)
-            group = uniq
+            group = sorted(uniq, key=_report_sort_key)
             lines.append(f"## {heading}")
             lines.append("")
             if not group:
@@ -346,7 +368,21 @@ class AnalysisEngine:
             # 分模块展示：论坛 / 统计 / 其他，避免大量条目挤压
             forum_items = [g for g in uncategorized if (g.system_id or 0) == 11 or self._match(g, ["reddit", "论坛", "zhihu", "贴吧"])]
             stat_items = [g for g in uncategorized if (g.system_id or 0) == 9 or (g.category or "") in ("官方统计", "PDF报表")]
-            other = [g for g in uncategorized if g not in forum_items and g not in stat_items]
+            # 修改原因：蒙古海关/警方快照不再归入杂项
+            gov_snap = [
+                g for g in uncategorized
+                if "快照" in (g.org_name or "") or "gov.mn" in (g.url or "").lower()
+            ]
+            other = [g for g in uncategorized if g not in forum_items and g not in stat_items and g not in gov_snap]
+            if gov_snap:
+                lines.append("### 蒙古官方快照情报")
+                lines.append("")
+                for g in sorted(gov_snap, key=_report_sort_key)[:80]:
+                    lines.append(
+                        f"- 【{g.intel_level}】{self._item_title_zh(g)}｜"
+                        f"{self._org_zh(g.org_name)}｜{g.url}"
+                    )
+                lines.append("")
             if stat_items:
                 lines.append("### 统计与年报类")
                 lines.append("")

@@ -68,7 +68,15 @@ NEGATIVE_GEO_MARKERS = [
     r"赤塔", r"\bchita\b", r"чита",
     r"恰克图", r"kyakhta", r"кяхта",
     r"后贝加尔", r"забайкал", r"zabaikal",
+    # 修改原因：过滤纯中国境内禁毒宣传/国内案件资讯
+    r"中国禁毒", r"全国禁毒", r"公安部禁毒", r"国家禁毒委",
+    r"境内管控", r"省内禁毒", r"全市禁毒宣传", r"禁毒宣传月",
+    r"呼和浩特", r"二连浩特", r"满洲里", r"包头市", r"锡林郭勒",
 ]
+# 国内口岸弱词：无蒙古锚点不得单独入库
+DOMESTIC_CN_PORT_MARKERS = (
+    "二连浩特", "满洲里", "二连", "呼和浩特", "包头", "锡林郭勒", "呼伦贝尔",
+)
 
 NEGATIVE_PATTERNS = HARD_EXCLUDE_PATTERNS
 
@@ -196,14 +204,57 @@ def has_strong_drug_term(text: str) -> bool:
 def has_mongolia_port_anchor(text: str) -> bool:
     """蒙古口岸/核心城市锚点（用于弱词快讯兼容）。"""
     tl = (text or "").lower()
+    t = text or ""
+    # 修改原因：国内口岸（二连浩特等）无蒙古锚点不得视为蒙古口岸
+    has_domestic = any(x in t for x in DOMESTIC_CN_PORT_MARKERS)
     anchors = [
         r"扎门乌德", r"zamyn[- ]?uud", r"zamiin[- ]?uud",
         r"甘其毛都", r"gashuun", r"gashuunsukhait",
         r"乌兰巴托", r"ulaanbaatar", r"улаанбаатар",
         r"蒙古国", r"монгол\s*улс", r"\bmongolia\b",
-        r"中蒙口岸", r"гааль",
+        r"中蒙口岸", r"гааль", r"цагдаа", r"гаальын",
     ]
-    return any(re.search(p, tl, re.I) for p in anchors)
+    has_mn = any(re.search(p, tl, re.I) for p in anchors)
+    if has_domestic and not has_mn:
+        return False
+    return has_mn
+
+
+def _china_domestic_control_ratio(text: str) -> float:
+    """中国境内管控/宣传句子占比（修改原因：纯国内资讯过滤）。"""
+    t = text or ""
+    parts = [p.strip() for p in re.split(r"[。！？!?\n；;]+", t) if p and len(p.strip()) >= 8]
+    if not parts:
+        return 0.0
+    cn_markers = (
+        "中国禁毒", "全国禁毒", "公安部", "国家禁毒", "境内", "我省", "我市",
+        "全区禁毒", "禁毒宣传", "打防管控", "净边行动", "清源行动",
+        "呼和浩特", "二连浩特", "满洲里", "内蒙古公安",
+    )
+    hit = sum(1 for s in parts if any(m in s for m in cn_markers))
+    return hit / max(len(parts), 1)
+
+
+def _body_has_mongolia_substance(text: str) -> bool:
+    """正文须含口岸/城市/官方机构锚点，仅标题挂蒙古国不算。"""
+    t = text or ""
+    markers = [
+        "扎门乌德", "甘其毛都", "乌兰巴托", "Ulaanbaatar", "улаанбаатар",
+        "蒙古国", "Монгол", "монгол улс", "海关", "警察", "检察院",
+        "gaаль", "цагдаа", "гааль", "customs", "police", "Zamyn", "Gashuun",
+        "蒙通社", "montsame", "gogo.mn", "ikon.mn",
+    ]
+    return any(m.lower() in t.lower() for m in markers)
+
+
+def _title_only_mongolia_hook(text: str) -> bool:
+    """仅标题含蒙古国、正文无实质蒙古内容 → 应过滤。"""
+    parts = (text or "").split("\n", 1)
+    title = parts[0] if parts else text or ""
+    body = parts[1] if len(parts) > 1 else text or ""
+    if "蒙古国" in title and not _body_has_mongolia_substance(body):
+        return True
+    return False
 
 
 def _negative_geo_sentence_ratio(text: str) -> float:
@@ -224,12 +275,15 @@ def _negative_geo_sentence_ratio(text: str) -> float:
 
 
 def is_mongolia_country_related(text: str) -> bool:
-    """严格蒙古国判定（原文 + 主体占比）。
+    """严格蒙古国判定（原文 + 主体占比 + 标题党过滤）。
 
-    修改原因：他国新闻仅顺带提蒙古时误入库；主体>=70%为俄边境/内蒙古则丢弃。
+    修改原因：纯国内资讯/仅标题挂蒙古国/主体≥70%中国境内管控则丢弃。
     """
     t = text or ""
     tl = t.lower()
+    # 修改原因：仅标题含蒙古国、正文无口岸/城市/机构 → 丢弃
+    if _title_only_mongolia_hook(t):
+        return False
     if "内蒙古" in t or re.search(r"\binner mongolia\b", tl):
         if "蒙古国" not in t and not re.search(r"монгол\s*улс|\bmongolia\b|扎门乌德|甘其毛都|ulaanbaatar", tl):
             return False
@@ -243,6 +297,11 @@ def is_mongolia_country_related(text: str) -> bool:
     has_neg = any(re.search(p, tl, re.I) for p in NEGATIVE_GEO_MARKERS) or any(
         x in t for x in ("内蒙古", "布里亚特", "乌兰乌德", "赤塔", "恰克图")
     )
+    # 修改原因：正文70%+中国境内管控/宣传，仅顺带提蒙古 → 丢弃
+    if _china_domestic_control_ratio(t) >= 0.70:
+        pos_hits = sum(1 for p in positive if re.search(p, tl, re.I))
+        if pos_hits <= 1:
+            return False
     if _negative_geo_sentence_ratio(t) >= 0.70:
         pos_hits = sum(1 for p in positive if re.search(p, tl, re.I))
         if pos_hits <= 1:
@@ -285,6 +344,9 @@ def is_drug_related(text: str, extra=None, loose: bool = False) -> bool:
     if strong:
         return True
     weak = any(w.lower() in blob for w in WEAK_DRUG_TERMS)
+    # 修改原因：国内口岸弱词无蒙古锚点禁止入库
+    if any(x in (text or "") for x in DOMESTIC_CN_PORT_MARKERS) and not has_mongolia_port_anchor(text or ""):
+        return False
     # 修改原因：边境/口岸查获 + 蒙古口岸锚点 → 允许入库
     if weak and has_mongolia_port_anchor(blob) and is_mongolia_country_related(text or ""):
         return True

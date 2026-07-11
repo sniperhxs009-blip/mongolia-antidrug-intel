@@ -48,10 +48,15 @@ def _is_mn_media(host: str) -> bool:
 def _limit_for_host(host: str) -> int:
     base = int(getattr(settings, "crawl_max_per_host_per_day", 10) or 10)
     if _is_mn_media(host):
-        # 蒙古本土媒体单日上限 50
+        # 修改原因：蒙古本土媒体单日上限 50（单独豁免扩容）
         return 50
-    # 修改原因：全球外媒/论坛站点单日上限降至 10，限制噪音抓取量
     h = (host or "").replace("www.", "")
+    # 修改原因：国内新华网/禁毒网等单日上限降至 5
+    domestic_cn = (
+        "news.cn", "xinhuanet.com", "nncc626.com", "nmg.110.gov.cn",
+    )
+    if any(h == s or h.endswith("." + s) for s in domestic_cn):
+        return 5
     noisy = (
         "reddit.com", "zhihu.com", "tieba.baidu.com", "bluelight.org",
         "reuters.com", "bbc.com", "apnews.com", "tass.com", "ria.ru",

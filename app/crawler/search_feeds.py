@@ -39,9 +39,10 @@ ProgressCallback = Optional[Callable[..., None]]
 
 
 def _google_news_url(query: str, hl: str, gl: str, ceid: str) -> str:
+    # 修改原因：破除默认20条上限，单次RSS拉取100条
     return (
         "https://news.google.com/rss/search?"
-        f"q={quote_plus(query)}&hl={hl}&gl={gl}&ceid={quote_plus(ceid)}"
+        f"q={quote_plus(query)}&hl={hl}&gl={gl}&ceid={quote_plus(ceid)}&num=100"
     )
 
 
@@ -103,6 +104,7 @@ class SearchFeedCollector:
         core_feeds = build_core_site_search_queries(when=when)
         lex_mode = "full" if mode == "full" else "news"
         lexicon_feeds = build_search_queries(mode=lex_mode, when=when)
+        # 修改原因：先生成蒙古渠道任务，国内中文检索在 lexicon 内已后置
         feeds = list(core_feeds) + list(lexicon_feeds)
         forum_when = getattr(settings, "forum_when", None) or "30d"
         # 修改原因：论坛默认关闭，仅手动开启
@@ -110,11 +112,11 @@ class SearchFeedCollector:
             from config.forum_search import build_forum_search_queries
 
             feeds.extend(build_forum_search_queries(mode=lex_mode, when=forum_when))
-        # 去重
+        # 修改原因：仅合并完全相同 query+语种；同关键词不同 hl 不合并
         seen_keys: Set[str] = set()
         uniq_feeds = []
         for f in feeds:
-            key = f"{f.get('engine')}|{f.get('query')}|{f.get('search_url')}"
+            key = f"{f.get('query')}|{f.get('hl')}|{f.get('engine')}"
             if key in seen_keys:
                 continue
             seen_keys.add(key)
@@ -134,21 +136,26 @@ class SearchFeedCollector:
                 return True
 
             feeds = [f for f in feeds if _feed_ok(f)]
-            # 修改原因：任务权重 本土站内 > UNODC > 外媒 > 论坛
+            # 修改原因：严格执行蒙古>gov快照>UNODC>外媒>国内中文>论坛 优先级
             def _prio(f: dict) -> int:
                 if f.get("priority") is not None:
                     return int(f["priority"])
                 eng = f.get("engine") or ""
                 kind = f.get("source_kind") or ""
                 org = (f.get("org_name") or "").lower()
+                q = (f.get("query") or "").lower()
                 if eng == "site_search" or kind == "site_search":
                     return 5
-                if "unodc" in org or "unodc" in (f.get("query") or "").lower():
+                if kind == "gov_snapshot" or f.get("snapshot_only") or "快照·" in org:
+                    return 15
+                if "unodc" in org or "unodc" in q:
                     return 20
                 if kind == "forum" or "论坛" in org or "reddit" in org:
-                    return 90
-                if kind == "gov_snapshot" or f.get("snapshot_only"):
-                    return 15
+                    return 99
+                if any(x in q for x in ("nncc626", "news.cn", "xinhuanet", "新华网", "禁毒网", "中国禁毒")):
+                    return 70
+                if any(x in org for x in ("新华网", "禁毒网", "中国禁毒", "nncc")):
+                    return 70
                 return 40
 
             feeds.sort(key=_prio)
@@ -242,18 +249,18 @@ class SearchFeedCollector:
         return published < datetime.utcnow() - timedelta(days=max_days)
 
     def _ingest_google_feed(self, client: httpx.Client, feed: dict, url: str) -> None:
-        # 取消 18/30 硬截断；尝试最多 8 轮（RSS 主结果 + start 偏移）
+        # 修改原因：分页15轮、每轮num=100，破除20条硬上限
         import random
         import time
 
         seen_links: Set[str] = set()
-        for page in range(8):
+        for page in range(15):
             page_url = url
             if page > 0:
                 page_url = (
                     "https://news.google.com/rss/search?"
                     f"q={quote_plus(feed['query'])}&hl={feed['hl']}&gl={feed['gl']}"
-                    f"&ceid={quote_plus(feed['ceid'])}&start={page * 10}"
+                    f"&ceid={quote_plus(feed['ceid'])}&num=100&start={page * 100}"
                 )
             client.headers["User-Agent"] = pick_user_agent()
             try:
@@ -360,55 +367,68 @@ class SearchFeedCollector:
                 t = "month"
             url = (
                 "https://www.reddit.com/search.json?"
-                f"q={quote(feed.get('query') or '')}&sort=new&t={t}&limit=25"
+                f"q={quote(feed.get('query') or '')}&sort=new&t={t}&limit=100"
             )
         headers = {"User-Agent": pick_user_agent()}
         last_err = None
         resp = None
-        for attempt in range(3):
-            try:
-                headers = {"User-Agent": pick_user_agent()}
-                resp = client.get(url, headers=headers)
-                if resp.status_code < 500:
-                    break
-                last_err = RuntimeError(f"HTTP {resp.status_code}")
-            except Exception as exc:  # noqa: BLE001
-                last_err = exc
-            import time
-            time.sleep(0.5 * (2 ** attempt))
-        if resp is None or resp.status_code >= 400:
-            raise last_err or RuntimeError("reddit failed")
-        data = resp.json()
-        children = ((data.get("data") or {}).get("children")) or []
-        for child in children[:40]:
-            d = child.get("data") or {}
-            title = normalize_text(d.get("title") or "")
-            permalink = d.get("permalink") or ""
-            link = ("https://www.reddit.com" + permalink) if permalink.startswith("/") else (d.get("url") or "")
-            summary = normalize_text((d.get("selftext") or "")[:500])
-            if not title:
-                continue
-            # 短快讯：≥100 字符或标题涉毒即保留（取消过严长度限制）
-            if len(title) + len(summary) < 20:
-                continue
-            published = None
-            created = d.get("created_utc")
-            if created:
+        after = None
+        # 修改原因：关闭20/40条截断，分页遍历全部检索结果
+        for page_idx in range(10):
+            fetch_url = url
+            if after:
+                fetch_url = f"{url}&after={after}"
+            resp = None
+            for attempt in range(3):
                 try:
-                    published = datetime.utcfromtimestamp(float(created))
-                except Exception:
-                    published = None
-            if published is not None and self._too_old(published):
-                self.stats["items_filtered"] += 1
-                continue
-            self._save_item(
-                feed=feed,
-                title=title,
-                summary=summary or title,
-                url=link,
-                published=published,
-                require_mongolia=True,
-            )
+                    headers = {"User-Agent": pick_user_agent()}
+                    resp = client.get(fetch_url, headers=headers)
+                    if resp.status_code < 500:
+                        break
+                    last_err = RuntimeError(f"HTTP {resp.status_code}")
+                except Exception as exc:  # noqa: BLE001
+                    last_err = exc
+                import time
+                time.sleep(0.5 * (2 ** attempt))
+            if resp is None or resp.status_code >= 400:
+                if page_idx == 0:
+                    raise last_err or RuntimeError("reddit failed")
+                break
+            data = resp.json()
+            children = ((data.get("data") or {}).get("children")) or []
+            if not children:
+                break
+            for child in children:
+                d = child.get("data") or {}
+                title = normalize_text(d.get("title") or "")
+                permalink = d.get("permalink") or ""
+                link = ("https://www.reddit.com" + permalink) if permalink.startswith("/") else (d.get("url") or "")
+                summary = normalize_text((d.get("selftext") or "")[:500])
+                if not title:
+                    continue
+                if len(title) + len(summary) < 20:
+                    continue
+                published = None
+                created = d.get("created_utc")
+                if created:
+                    try:
+                        published = datetime.utcfromtimestamp(float(created))
+                    except Exception:
+                        published = None
+                if published is not None and self._too_old(published):
+                    self.stats["items_filtered"] += 1
+                    continue
+                self._save_item(
+                    feed=feed,
+                    title=title,
+                    summary=summary or title,
+                    url=link,
+                    published=published,
+                    require_mongolia=True,
+                )
+            after = (data.get("data") or {}).get("after")
+            if not after:
+                break
 
     def _ingest_ddg_news(self, client: httpx.Client, feed: dict) -> None:
         # DuckDuckGo news JSON 常不稳定，失败则走 HTML 搜索
@@ -419,7 +439,8 @@ class SearchFeedCollector:
                 if resp.status_code < 400:
                     data = resp.json()
                     results = data if isinstance(data, list) else (data.get("results") or data.get("items") or [])
-                    for it in results[:20]:
+                    # 修改原因：关闭20条截断，遍历全部 JSON 结果
+                    for it in results:
                         title = normalize_text(it.get("title") or it.get("heading") or "")
                         link = it.get("url") or it.get("link") or ""
                         summary = normalize_text(it.get("excerpt") or it.get("body") or "")
@@ -455,7 +476,7 @@ class SearchFeedCollector:
                 qdr = "w"
             elif w in ("30d", "m", "month", "90d"):
                 qdr = "m"
-            url = f"https://www.google.com/search?q={quote_plus(q)}&num=20&hl=en&tbs=qdr:{qdr}"
+            url = f"https://www.google.com/search?q={quote_plus(q)}&num=100&hl=en&tbs=qdr:{qdr}"
         resp = client.get(url)
         if resp.status_code >= 400:
             raise RuntimeError(f"HTTP {resp.status_code}")
@@ -505,7 +526,8 @@ class SearchFeedCollector:
                 require_mongolia=True,
             )
             count += 1
-            if count >= 15:
+            # 修改原因：破除15条硬截断，单任务最多采集80条候选
+            if count >= 80:
                 break
 
     def _site_search_next_urls(self, soup: BeautifulSoup, current_url: str) -> list:
@@ -537,7 +559,7 @@ class SearchFeedCollector:
                 continue
             seen.add(u)
             out.append(u)
-        return out[:8]
+        return out[:15]
 
     def _collect_site_search_candidates(self, soup: BeautifulSoup, search_url: str, query: str) -> list:
         candidates = []
@@ -575,7 +597,7 @@ class SearchFeedCollector:
         return candidates
 
     def _ingest_site_search(self, client: httpx.Client, feed: dict) -> None:
-        """站内搜索：自动翻页最多 10 页，每页候选汇总后取 30×页 上限。"""
+        """站内搜索：自动翻页最多15页，每页候选80条，全局800上限。"""
         search_url = feed.get("search_url")
         if not search_url:
             return
@@ -583,7 +605,7 @@ class SearchFeedCollector:
         pages_to_visit = [search_url]
         visited = set()
         all_candidates = []
-        max_pages = 10  # 原 5 → 10
+        max_pages = 15  # 修改原因：10→15页
 
         while pages_to_visit and len(visited) < max_pages:
             page_url = pages_to_visit.pop(0)
@@ -603,7 +625,7 @@ class SearchFeedCollector:
             for tag in soup(["script", "style", "noscript", "header", "footer", "nav"]):
                 tag.decompose()
             page_cands = self._collect_site_search_candidates(soup, page_url, query)
-            all_candidates.extend(page_cands[:30])  # 每页最多 30 条
+            all_candidates.extend(page_cands[:80])  # 修改原因：每页30→80条
             for nxt in self._site_search_next_urls(soup, page_url):
                 if nxt not in visited and nxt not in pages_to_visit:
                     pages_to_visit.append(nxt)
@@ -617,7 +639,7 @@ class SearchFeedCollector:
             seen.add(url)
             uniq.append((title, url))
 
-        for title, url in uniq[:300]:
+        for title, url in uniq[:800]:
             self._save_item(
                 feed=feed,
                 title=title,

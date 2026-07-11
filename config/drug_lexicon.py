@@ -159,7 +159,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
     news_mode = mode == "news"
     when_suffix = f" when:{when}" if when else ""
 
-    # —— 蒙语核心 ——
+    # —— 蒙语核心（修改原因：news 扩充至16组，与中文词条数量持平）——
     mn_cores_news = [
         "мансууруулах бодис",
         "хар тамхи",
@@ -170,8 +170,13 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "героин",
         "баривчилгаа мансууруулах",
         "гааль мансууруулах",
+        "цагдаа мансууруулах",
         "Замын-Үүд мансууруулах",
+        "Гашуунсухайт мансууруулах",
         "хил мансууруулах",
+        "хил нэвтрүүлэх мансууруулах",
+        "улаанбаатар мансууруулах",
+        "синтетик мансууруулах",
     ]
     mn_cores_full = [
         "мансууруулах бодис",
@@ -210,6 +215,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
             "engine": "google_news",
             "require_mongolia": False,
             "tier": "news" if news_mode else "full",
+            "priority": 8,
         })
 
     # —— 英语：蒙古 + 明确毒品品名 ——
@@ -255,50 +261,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
             "engine": "google_news",
             "require_mongolia": True,
             "tier": "news" if news_mode else "full",
-        })
-
-    # —— 中文：蒙古国 + 毒品 ——
-    zh_news = [
-        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
-        "冰毒 OR 芬太尼 OR 尼秦 OR 海洛因 OR 大麻",
-        "合成大麻素 OR 安纳咖 OR 氯胺酮",
-        "口岸查获 OR 跨境贩毒 OR 走私毒品",
-        # 地域+毒品组合（扩大检索基数）
-        "扎门乌德 OR 甘其毛都 OR 二连浩特 (毒品 OR 缉毒 OR 查获)",
-        "中蒙口岸 OR 中蒙边境 (贩毒 OR 走私 OR 缉毒)",
-        "蒙古国 (易制毒 OR 麻精 OR 新型毒品 OR 安纳咖)",
-    ]
-    zh_full = [
-        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
-        "冰毒 OR 冰块 OR 海洛因 OR 大麻 OR 黑烟草 OR 可卡因",
-        "安纳咖 OR 苯甲酸钠咖啡因",
-        "曲马多 OR 羟考酮 OR 吗啡 OR 可待因",
-        "芬太尼 OR 尼秦 OR 异托尼他秦 OR 奥芬",
-        "合成大麻素 OR 香料毒 OR HHC OR Delta-8",
-        "裸盖菇素 OR 迷幻蘑菇 OR 卡西酮 OR 浴盐 OR MDPV",
-        "快乐水 OR 派对毒品 OR 液态新型精神药物 OR 情绪舒缓液",
-        "安定 OR 阿普唑仑 OR 苯二氮卓",
-        "氯胺酮 OR 摇头丸 OR 新型毒品",
-        "易制毒 OR 麻精 OR 制毒",
-        "口岸查获 OR 跨境贩毒 OR 走私毒品",
-        "扎门乌德 (毒品 OR 缉毒 OR 查获 OR 走私)",
-        "甘其毛都 (毒品 OR 缉毒 OR 查获 OR 走私)",
-        "二连浩特 (毒品 OR 缉毒 OR 查获)",
-        "中蒙口岸 OR 中蒙边境 (缉毒 OR 贩毒 OR 安纳咖 OR 芬太尼)",
-        "蒙古国 (尼秦 OR 异托尼他秦 OR 合成大麻素 OR 安纳咖)",
-    ]
-    for g in (zh_news if news_mode else zh_full):
-        tasks.append({
-            "system_id": 8,
-            "system_name": "全国媒体与公开资讯",
-            "org_name": f"搜索·中文·{g.split(' OR ')[0]}",
-            "query": f"\"蒙古国\" ({g}){when_suffix}",
-            "hl": "zh-CN",
-            "gl": "cn",
-            "ceid": "CN:zh-Hans",
-            "engine": "google_news",
-            "require_mongolia": True,
-            "tier": "news" if news_mode else "full",
+            "priority": 25,
         })
 
     # —— 媒体站内搜索（可打开原文）——
@@ -354,9 +317,10 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
                 "search_url": site["template"].format(q=q),
                 "require_mongolia": False,
                 "tier": "news" if news_mode else "full",
+                "priority": 5,
             })
 
-    # 检索降噪：统一追加负面排除与蒙古锚点
+    # 检索降噪：蒙语/英语/站内任务先处理
     for _i, _task in enumerate(tasks):
         if _task.get("query"):
             _task["query"] = _finalize_query(_task["query"], bind_mongolia=bool(_task.get("require_mongolia", True)))
@@ -367,6 +331,59 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
 
     tasks.extend(build_global_search_queries(mode=mode, when=when))
 
+    # —— 中文检索后置（修改原因：国内中文渠道低优先级，避免耗尽额度）——
+    zh_news = [
+        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
+        "冰毒 OR 芬太尼 OR 尼秦 OR 海洛因 OR 大麻",
+        "合成大麻素 OR 安纳咖 OR 氯胺酮",
+        "口岸查获 OR 跨境贩毒 OR 走私毒品",
+        "扎门乌德 OR 甘其毛都 (毒品 OR 缉毒 OR 查获)",
+        "中蒙口岸 OR 中蒙边境 (贩毒 OR 走私 OR 缉毒)",
+        "蒙古国 (易制毒 OR 麻精 OR 新型毒品 OR 安纳咖)",
+        "乌兰巴托 (毒品 OR 缉毒 OR 毒品交易)",
+        "蒙古国 芬太尼 OR 尼秦",
+        "蒙古国 冰毒 OR 海洛因",
+        "扎门乌德 口岸 缉毒",
+        "甘其毛都 口岸 查获",
+        "中蒙 毒品 走私",
+        "蒙古国 海关 毒品",
+        "蒙古国 警察 缉毒",
+        "蒙古国 新型毒品",
+    ]
+    zh_full = [
+        "毒品 OR 缉毒 OR 禁毒 OR 贩毒",
+        "冰毒 OR 冰块 OR 海洛因 OR 大麻 OR 黑烟草 OR 可卡因",
+        "安纳咖 OR 苯甲酸钠咖啡因",
+        "曲马多 OR 羟考酮 OR 吗啡 OR 可待因",
+        "芬太尼 OR 尼秦 OR 异托尼他秦 OR 奥芬",
+        "合成大麻素 OR 香料毒 OR HHC OR Delta-8",
+        "裸盖菇素 OR 迷幻蘑菇 OR 卡西酮 OR 浴盐 OR MDPV",
+        "快乐水 OR 派对毒品 OR 液态新型精神药物 OR 情绪舒缓液",
+        "安定 OR 阿普唑仑 OR 苯二氮卓",
+        "氯胺酮 OR 摇头丸 OR 新型毒品",
+        "易制毒 OR 麻精 OR 制毒",
+        "口岸查获 OR 跨境贩毒 OR 走私毒品",
+        "扎门乌德 (毒品 OR 缉毒 OR 查获 OR 走私)",
+        "甘其毛都 (毒品 OR 缉毒 OR 查获 OR 走私)",
+        "二连浩特 (毒品 OR 缉毒 OR 查获)",
+        "中蒙口岸 OR 中蒙边境 (缉毒 OR 贩毒 OR 安纳咖 OR 芬太尼)",
+        "蒙古国 (尼秦 OR 异托尼他秦 OR 合成大麻素 OR 安纳咖)",
+    ]
+    for g in (zh_news if news_mode else zh_full):
+        tasks.append({
+            "system_id": 8,
+            "system_name": "全国媒体与公开资讯",
+            "org_name": f"搜索·中文·{g.split(' OR ')[0]}",
+            "query": f"\"蒙古国\" ({g}){when_suffix}",
+            "hl": "zh-CN",
+            "gl": "cn",
+            "ceid": "CN:zh-Hans",
+            "engine": "google_news",
+            "require_mongolia": True,
+            "tier": "news" if news_mode else "full",
+            "priority": 70,
+        })
+
     # 修改原因：论坛任务不在此批量生成；仅 search_feeds 在 enable_forum_search=true 时追加
 
     for _i, _task in enumerate(tasks):
@@ -374,6 +391,7 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
             if _task.get("engine") != "site_search":
                 _task["query"] = _finalize_query(_task["query"], bind_mongolia=bool(_task.get("require_mongolia", True)))
         tasks[_i] = _task
+    tasks.sort(key=lambda x: x.get("priority", 50))
     return tasks
 
 
