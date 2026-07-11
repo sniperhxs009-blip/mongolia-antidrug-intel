@@ -24,10 +24,12 @@ from app.crawler.filters import (
     is_critical,
     is_drug_related,
     is_mongolia_country_related,
+    is_nav_or_index_page,
     is_stale,
     is_unodc_mongolia_signal,
     normalize_text,
     parse_date_guess,
+    passes_news_ingest_gate,
     same_host_or_sub,
     translate_to_zh,
 )
@@ -436,7 +438,7 @@ class CrawlEngine:
         # 去重保序
         seen_c: Set[str] = set()
         ordered: List[str] = []
-        for u in [src.page_url] + article_links:
+        for u in article_links:
             if u not in seen_c:
                 seen_c.add(u)
                 ordered.append(u)
@@ -496,6 +498,12 @@ class CrawlEngine:
         # 原缺陷：仅用标题+摘要且蒙通社强制标题含毒词 → 深度专题被误删
         # 优化：标题/摘要/正文任一命中强毒词即可；取消蒙通社标题强制
         gate_blob = f"{title}\n{summary}\n{content[:2500]}"
+        if is_nav_or_index_page(title, url):
+            self.stats["items_filtered"] += 1
+            return
+        if not passes_news_ingest_gate(title, summary, url):
+            self.stats["items_filtered"] += 1
+            return
         if not is_drug_related(gate_blob, extra_keywords, loose=False):
             self.stats["items_filtered"] += 1
             return

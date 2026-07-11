@@ -70,6 +70,18 @@ HARD_EXCLUDE_PATTERNS = [
     # 俄边境/布里亚特/内蒙古噪音（无蒙古国锚点时由地域函数丢弃；此处强化烟草等）
     r"分裂主义",
     r"地缘政治对抗",
+    r"\bmining\b",
+    r"\bcopper\b",
+    r"\blithium\b",
+    r"\bore\b",
+    r"矿产",
+    r"矿业",
+    r"采矿",
+    r"\bapartment\b",
+    r"公寓",
+    r"采矿计划",
+    r"former leader",
+    r"前领导人",
 ]
 # 负面地域：出现且无蒙古国正锚点 → 丢弃
 NEGATIVE_GEO_MARKERS = [
@@ -345,9 +357,10 @@ def is_mongolia_country_related(text: str) -> bool:
 
 
 def is_unodc_mongolia_signal(text: str) -> bool:
-    """UNODC：全球禁毒报告/统计资讯正常入库，无需蒙古国字样。"""
+    """UNODC：须含毒品/监管信号，不能仅凭机构名入库。"""
     t = (text or "").lower()
-    if "unodc" in t or "united nations office on drugs" in t:
+    drug_hit = has_strong_drug_term(text or "") or has_regulatory_drug_term(text or "")
+    if drug_hit and ("unodc" in t or "united nations office on drugs" in t):
         return True
     return is_mongolia_country_related(text or "")
 
@@ -406,11 +419,143 @@ def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bo
 def title_has_strong_drug(title: str) -> bool:
     """标题前置过滤：强毒品词、监管类词，或弱词+蒙古口岸锚点。"""
     tt = title or ""
+    if title_is_category_label(tt):
+        return False
     if has_strong_drug_term(tt):
         return True
     if has_regulatory_drug_term(tt):
         return True
     return any(w.lower() in tt.lower() for w in WEAK_DRUG_TERMS) and has_mongolia_port_anchor(tt)
+
+
+NAV_EXACT_TITLES = frozenset({
+    "边境口岸缉毒查验体系",
+    "国际禁毒协作机构",
+    "全国媒体与公开资讯",
+    "蒙古节拍",
+    "每日简报",
+    "每周简报",
+    "每月简报",
+    "随时了解蒙古情况",
+    "关于蒙古节拍",
+})
+
+CATEGORY_TITLE_SUFFIXES = ("体系", "机构", "专栏", "频道", "栏目", "中心", "导航", "首页")
+CATEGORY_TITLE_PREFIXES = ("关于", "了解", "欢迎访问", "点击进入", "全国媒体")
+
+
+def title_is_category_label(title: str) -> bool:
+    """栏目/导航标题（非新闻稿）。"""
+    t = (title or "").strip()
+    if not t:
+        return False
+    if t in NAV_EXACT_TITLES:
+        return True
+    tl = t.lower()
+    if any(x in tl for x in ("daily brief", "weekly brief", "newsletter", "about mongolia beat")):
+        return True
+    if any(t.startswith(p) for p in CATEGORY_TITLE_PREFIXES):
+        return True
+    if any(t.endswith(s) for s in CATEGORY_TITLE_SUFFIXES) and len(t) <= 24:
+        return True
+    if re.match(r"^(每日|每周|每月|今日).{0,8}(简报|快讯|导读)$", t):
+        return True
+    if len(t) <= 18 and re.search(r"(禁毒|缉毒|毒品)", t) and not re.search(
+        r"(查获|逮捕|立案|缴获|团伙|案件|走私|邮寄|实验室|立法)", t
+    ):
+        return True
+    return False
+
+
+def looks_like_article_url(url: str) -> bool:
+    """URL 是否像单篇新闻（非栏目/首页）。"""
+    if not url or url.startswith("search://"):
+        return False
+    low = url.lower()
+    if "news.google.com" in low:
+        return True
+    try:
+        path = urlparse(url).path.lower()
+    except Exception:
+        return False
+    if path in ("", "/", "/index.html", "/index.htm"):
+        return False
+    if re.match(r"^/(cn|en|mn|read|sh)/?$", path):
+        return False
+    if any(x in low for x in (
+        "/category/", "/tag/", "/topic/", "/corner/", "/channel/", "/author/",
+        "/login", "/subscribe", "/newsletter", "/about", "/contact",
+    )):
+        return False
+    if re.search(r"/\d{4,}(/|$|\.)", low):
+        return True
+    if re.search(r"/\d+\.html?$", low):
+        return True
+    if re.search(r"/(n|a|post|article|story|detail|read|sh)/[^/?#]+", low):
+        return True
+    if re.search(r"/(news|press|info)/[^/?#]+\d", low):
+        return True
+    segments = [s for s in path.strip("/").split("/") if s]
+    if segments and segments[0] in ("cn", "en", "mn", "read", "sh") and len(segments) <= 1:
+        return False
+    last = segments[-1] if segments else ""
+    if len(last) >= 18 and ("-" in last or "_" in last):
+        return True
+    return False
+
+
+def is_nav_or_index_page(title: str, url: str = "") -> bool:
+    """导航页/栏目页/站点首页。"""
+    if title_is_category_label(title):
+        return True
+    if url:
+        try:
+            path = urlparse(url).path.lower()
+        except Exception:
+            path = ""
+        if path in ("", "/", "/index.html", "/index.htm"):
+            return True
+        if not looks_like_article_url(url) and len((title or "").strip()) <= 20:
+            return True
+    return False
+
+
+def _has_mining_noise(blob: str, title: str) -> bool:
+    """矿业/房产等非涉毒新闻误命中检索词时丢弃。"""
+    low = (blob or "").lower()
+    tl = (title or "").lower()
+    mining = re.search(
+        r"mining|copper|lithium|\bore\b|矿产|矿业|采矿|apartment|公寓|采矿计划|former leader|前领导人",
+        low,
+        re.I,
+    )
+    if not mining:
+        return False
+    if has_strong_drug_term(title or "") or has_regulatory_drug_term(title or ""):
+        return False
+    if re.search(r"毒品|缉毒|查获|走私|narcotic|fentanyl|meth|seizure|smuggling", tl, re.I):
+        return False
+    return True
+
+
+def passes_news_ingest_gate(title: str, summary: str = "", url: str = "") -> bool:
+    """RSS/搜索入库：标题须为新闻，禁止导航页与摘要伪命中。"""
+    title = (title or "").strip()
+    if not title or is_nav_or_index_page(title, url):
+        return False
+    if _has_mining_noise(f"{title} {summary}", title):
+        return False
+    if title_has_strong_drug(title) or has_regulatory_drug_term(title):
+        return True
+    if any(w.lower() in title.lower() for w in WEAK_DRUG_TERMS) and has_mongolia_port_anchor(title):
+        return True
+    if url and looks_like_article_url(url):
+        if is_mongolia_country_related(title) and re.search(
+            r"(查获|逮捕|缴获|立案|团伙|走私|毒品|缉毒|毒品|邮寄|麻醉|查获)",
+            title,
+        ):
+            return True
+    return False
 
 
 def credibility_label(org_name: str = "", system_id: int = 0, url: str = "") -> str:

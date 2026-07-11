@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.audit import audit_log
-from app.crawler.filters import is_drug_related, is_mongolia_country_related
+from app.crawler.filters import is_drug_related, is_mongolia_country_related, is_nav_or_index_page, passes_news_ingest_gate
 from app.db.models import IntelItem, StatRecord
 from config.core_official import is_forbidden_url
 
@@ -37,6 +37,18 @@ def purge_irrelevant_items(db: Session) -> dict:
         )
         if is_forbidden_url(it.url or ""):
             # 修改原因：仅删除原生 gov.mn 直链脏数据；快照链保留
+            db.delete(it)
+            deleted += 1
+            continue
+        if is_nav_or_index_page(it.title or it.title_zh or "", it.url or ""):
+            db.delete(it)
+            deleted += 1
+            continue
+        if not passes_news_ingest_gate(
+            it.title or it.title_zh or "",
+            it.summary or it.summary_zh or "",
+            it.url or "",
+        ):
             db.delete(it)
             deleted += 1
             continue

@@ -24,10 +24,14 @@ from app.crawler.filters import (
     is_critical,
     is_drug_related,
     is_mongolia_country_related,
+    is_nav_or_index_page,
     is_unodc_mongolia_signal,
+    looks_like_article_url,
     normalize_text,
+    passes_news_ingest_gate,
     title_has_strong_drug,
     translate_to_zh,
+    _has_mining_noise,
 )
 from app.crawler.http_client import build_httpx_client, pick_user_agent
 from app.db.models import IntelItem
@@ -73,16 +77,13 @@ def _feed_is_expanded_media(feed: dict) -> bool:
 
 
 def title_passes_feed_gate(title: str, summary: str, feed: dict) -> bool:
-    """修改原因：放宽 Google/站内标题门槛，覆盖药品监管、立法、口岸缴获类新闻。"""
-    blob = f"{title} {summary}"
-    if title_has_strong_drug(blob):
+    """修改原因：仅标题含毒品/监管信号可过 RSS 门槛，禁止摘要回显检索词伪命中。"""
+    if is_nav_or_index_page(title):
+        return False
+    if passes_news_ingest_gate(title, "", ""):
         return True
     if _feed_is_gov_snapshot(feed) and _gov_weak_signal(title, summary):
-        return True
-    if _feed_is_expanded_media(feed) and has_regulatory_drug_term(blob):
-        return True
-    if has_regulatory_drug_term(blob) and is_mongolia_country_related(blob):
-        return True
+        return title_has_strong_drug(title) or has_mongolia_port_anchor(title)
     return False
 
 
@@ -341,6 +342,9 @@ class SearchFeedCollector:
                     continue
                 real_url = _resolve_google_article_url(link, client)
                 store_url = sanitize_store_url(real_url or link, title=title)
+                if is_nav_or_index_page(title, store_url):
+                    self.stats["items_filtered"] += 1
+                    continue
                 # 修改原因：RSS 链接本身含 gov.mn 片段也转快照
                 if re.search(r"[\w-]+\.gov\.mn|zasag\.mn", (real_url or link or ""), re.I):
                     store_url = sanitize_store_url(real_url or link, title=title)
@@ -389,6 +393,9 @@ class SearchFeedCollector:
             raw_sum = getattr(entry, "summary", "") or getattr(entry, "description", "") or ""
             summary = normalize_text(BeautifulSoup(raw_sum, "lxml").get_text(" ", strip=True))
             if not title:
+                continue
+            if not title_passes_feed_gate(title, summary, feed):
+                self.stats["items_filtered"] += 1
                 continue
             published = None
             if getattr(entry, "published_parsed", None):
@@ -641,19 +648,23 @@ class SearchFeedCollector:
                 continue
             if any(x in path for x in ("/login", "/tag", "/category", "/corner", "/topic", "/author", "/#")):
                 continue
-            article_ok = any(
-                x in path
-                for x in (
-                    "/n/", "/r/", "/a/", "/news/", "/post/", "/article/",
-                    "/mn/", "/en/", "/cn/", "/read/", "/sh/",
+            segments = [s for s in path.strip("/").split("/") if s]
+            if segments and segments[0] in ("cn", "en", "mn", "read", "sh") and len(segments) <= 1:
+                continue
+            article_ok = (
+                re.search(r"/\d{4,}", path)
+                or any(
+                    x in path
+                    for x in (
+                        "/n/", "/r/", "/a/", "/news/", "/post/", "/article/",
+                        "/read/", "/sh/",
+                    )
                 )
             )
             if not article_ok:
                 continue
-            # 修改原因：站内候选放宽至监管类/强毒品词/检索词命中
             if not title_has_strong_drug(text) and not has_regulatory_drug_term(text):
-                if not has_regulatory_drug_term(query) and not title_has_strong_drug(query):
-                    continue
+                continue
             candidates.append((text, full))
         return candidates
 
@@ -726,6 +737,12 @@ class SearchFeedCollector:
         summary = normalize_text(summary)
         if not title:
             return
+        if is_nav_or_index_page(title, url):
+            self.stats["items_filtered"] += 1
+            return
+        if _has_mining_noise(f"{title}\n{summary}", title):
+            self.stats["items_filtered"] += 1
+            return
         if is_forbidden_url(url or ""):
             # 修改原因：仅拦原生直链；快照包装链可入库
             self.stats["items_filtered"] += 1
@@ -779,12 +796,20 @@ class SearchFeedCollector:
                     self.stats["items_filtered"] += 1
                     return
             elif is_unodc_feed:
-                pass  # 修改原因：UNODC 全球报告无需蒙古国字样，标低可信仍入库
+                if not is_unodc_mongolia_signal(title):
+                    self.stats["items_filtered"] += 1
+                    return
             else:
                 self.stats["items_filtered"] += 1
                 return
 
-        gate = body
+        if not force_drug and not passes_news_ingest_gate(title, summary, url):
+            self.stats["items_filtered"] += 1
+            return
+
+        gate = title
+        if looks_like_article_url(url):
+            gate = f"{title}\n{summary[:400]}"
         is_gov_src = _feed_is_gov_snapshot(feed)
         if not force_drug and not is_drug_related(
             gate, loose=False, gov_snapshot=is_gov_src

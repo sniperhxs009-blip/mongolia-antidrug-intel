@@ -106,13 +106,29 @@ def test_hash_stable():
 
 
 def test_regulatory_and_port_seizure_news():
-    from app.crawler.filters import has_regulatory_drug_term, is_drug_related, title_has_strong_drug
+    from app.crawler.filters import (
+        has_regulatory_drug_term,
+        is_drug_related,
+        is_nav_or_index_page,
+        passes_news_ingest_gate,
+        title_has_strong_drug,
+    )
 
     assert title_has_strong_drug("蒙古国成立国家级药品质量检测实验室")
     assert has_regulatory_drug_term("National drug quality laboratory controlled substance")
     assert is_drug_related("全国口岸今年累计缴获毒品4.07吨 扎门乌德")
     assert is_drug_related("那达慕摔跤选手检出违禁兴奋剂 蒙古国", loose=False)
-
+    assert passes_news_ingest_gate("美国毒品邮寄到蒙古！三人被捕", url="https://news.mn/n/12345")
+    assert passes_news_ingest_gate("蒙古海关查获6克麻醉药品", url="https://news.mn/n/99999")
+    assert not passes_news_ingest_gate("边境口岸缉毒查验体系")
+    assert not passes_news_ingest_gate("国际禁毒协作机构")
+    assert not passes_news_ingest_gate("蒙古节拍")
+    assert not passes_news_ingest_gate("每日简报")
+    assert is_nav_or_index_page("关于蒙古节拍", "https://mongolia.robertritz.com/")
+    assert not passes_news_ingest_gate(
+        "联邦调查局寻求扣押纽约公寓与蒙古前领导人采矿计划有关",
+        url="https://www.cnbc.com/2024/01/test.html",
+    )
 
     assert classify_category("border customs drug trafficking seizure") == "跨境毒情"
     assert credibility_label("UNODC 世界毒品报告", 7) == "低"
