@@ -18,7 +18,9 @@ services:
       - key: CRAWL_INTERVAL
         value: every_12h
       - key: CRAWL_REQUEST_DELAY_SEC
-        value: "1.2"
+        value: "0.3"
+      - key: CRAWL_DELAY_JITTER_SEC
+        value: "0.5"
       - key: ENABLE_TRANSLATION
         value: "true"
       - key: ENABLE_SEARCH_FEEDS
@@ -34,13 +36,13 @@ services:
       - key: CRAWL_LOOSE_FILTER
         value: "false"
       - key: NEWS_WHEN
-        value: "30d"
+        value: "90d"
       - key: FULL_WHEN
         value: "30d"
       - key: FORUM_WHEN
         value: "30d"
       - key: ENABLE_FORUM_SEARCH
-        value: "false"
+        value: "true"
       - key: AUTH_ENABLED
         value: "true"
       - key: REQUIRE_MANUAL_DEPLOY
