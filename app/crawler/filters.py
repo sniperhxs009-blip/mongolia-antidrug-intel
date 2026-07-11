@@ -353,24 +353,22 @@ def _has_hard_exclude(blob: str) -> bool:
 
 
 def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bool = False) -> bool:
-    """涉毒判定：强词必入；弱词须搭配蒙古口岸锚点（小型缉毒快讯兼容）。"""
+    """涉毒判定：强词必入；弱词+蒙古地理锚点即可入库，无需强毒品词。"""
     blob = (text or "").lower()
     if not blob.strip():
         return False
     if _has_hard_exclude(blob):
         return False
-    # 修改原因：gov 快照来源仅口岸/缉毒弱词即可入库，无需强毒品词
-    if gov_snapshot and any(w in blob for w in GOV_WEAK_DRUG_MARKERS):
-        return True
     extras = [str(x).lower() for x in (extra or []) if x]
-    strong = has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3))
-    if strong:
+    if has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3)):
         return True
-    weak = any(w.lower() in blob for w in WEAK_DRUG_TERMS)
-    # 修改原因：国内口岸弱词无蒙古锚点禁止入库
     if any(x in (text or "") for x in DOMESTIC_CN_PORT_MARKERS) and not has_mongolia_port_anchor(text or ""):
         return False
-    # 修改原因：弱词+蒙古地理锚点即可入库，无需强毒品词
+    weak_terms = list(WEAK_DRUG_TERMS)
+    if gov_snapshot:
+        weak_terms = list(dict.fromkeys([*weak_terms, *GOV_WEAK_DRUG_MARKERS]))
+    weak = any(w.lower() in blob for w in weak_terms)
+    # 修改原因：废除弱词必须搭配强毒品词；口岸/查获弱词+蒙古锚点直接入库
     if weak and has_mongolia_port_anchor(blob):
         return True
     return False

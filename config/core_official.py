@@ -55,6 +55,14 @@ SEARCH_NEGATIVE_EXCLUDE = (
     '-兴奋剂 -奥运会 -tobacco -cigarette -普通药品 -"medical care"'
 )
 
+# 修改原因：所有 site: 检索 query 统一追加边境执法蒙语词
+MN_SITE_BORDER_OR = "хураан OR хил OR баривчилгаа OR гааль"
+
+
+def _site_query_core(core: str) -> str:
+    """site: 检索关键词模板：在原有核心词后追加边境执法蒙语词。"""
+    return f"({core}) OR ({MN_SITE_BORDER_OR})"
+
 FORBIDDEN_PATH_FRAGMENTS = (
     "/anti-narcotics",
     "/drug-control",
@@ -343,17 +351,18 @@ def build_core_site_search_queries(
         sid = int(source.get("system_id") or 8)
         sname = source.get("system_name") or "全国媒体与公开资讯"
         org = source.get("org_name") or domain
+        qcore = _site_query_core(query_core)
         if "unodc.org" in domain:
-            q = f"site:unodc.org Mongolia ({query_core}){when_suffix}"
+            q = f"site:unodc.org Mongolia ({qcore}){when_suffix}"
             prio = 20
         elif domain.endswith("nncc626.com") or "news.cn" in domain or "xinhuanet" in domain:
-            q = f"site:{domain} (蒙古国 OR 中蒙 OR 扎门乌德 OR 甘其毛都) ({query_core}){when_suffix}"
+            q = f"site:{domain} (蒙古国 OR 中蒙 OR 扎门乌德 OR 甘其毛都) ({qcore}){when_suffix}"
             prio = 75  # 修改原因：国内中文媒体最低优先级
         elif "cgtn.com" in domain or "akipress.com" in domain:
-            q = f"site:{domain} Mongolia ({query_core}){when_suffix}"
+            q = f"site:{domain} Mongolia ({qcore}){when_suffix}"
             prio = 40
         else:
-            q = f"site:{domain} ({query_core}){when_suffix}"
+            q = f"site:{domain} ({qcore}){when_suffix}"
             prio = 10 if any(x in domain for x in ("montsame", "gogo", "ikon", "news.mn")) else 20
         q = (q + SEARCH_NEGATIVE_EXCLUDE).strip()
         tasks.append({
@@ -391,11 +400,12 @@ def build_core_site_search_queries(
         4: "边境口岸缉毒查验体系",
     }
     for host, qcore, sys_id in gov_snapshot_hosts:
+        qcore_full = _site_query_core(qcore)
         tasks.append({
             "system_id": sys_id,
             "system_name": sys_names.get(sys_id, "国家级禁毒统筹协调机构"),
             "org_name": f"快照·{host}",
-            "query": f"site:{host} ({qcore}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
+            "query": f"site:{host} ({qcore_full}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
             "hl": "en",
             "gl": "us",
             "ceid": "US:en",
@@ -469,11 +479,12 @@ def build_core_site_search_queries(
         ("ubpost.mongolnews.mn", "drug OR narcotic OR trafficking OR seizure", "en", "us", "US:en"),
     ]
     for domain, qcore, hl, gl, ceid in media_extra:
+        qcore_full = _site_query_core(qcore)
         tasks.append({
             "system_id": 8,
             "system_name": "全国媒体与公开资讯",
             "org_name": f"媒体补盲·{domain}",
-            "query": f"site:{domain} ({qcore}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
+            "query": f"site:{domain} ({qcore_full}){when_suffix}{SEARCH_NEGATIVE_EXCLUDE}",
             "hl": hl,
             "gl": gl,
             "ceid": ceid,
