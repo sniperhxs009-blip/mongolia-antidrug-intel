@@ -56,7 +56,7 @@ def _limit_for_host(host: str) -> int:
         "news.cn", "xinhuanet.com", "nncc626.com", "nmg.110.gov.cn",
     )
     if any(h == s or h.endswith("." + s) for s in domestic_cn):
-        return 5
+        return 30
     noisy = (
         "reddit.com", "zhihu.com", "tieba.baidu.com", "bluelight.org",
         "reuters.com", "bbc.com", "apnews.com", "tass.com", "ria.ru",

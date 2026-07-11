@@ -253,7 +253,7 @@ def _body_has_mongolia_substance(text: str) -> bool:
     """正文须含口岸/城市/官方机构锚点，仅标题挂蒙古国不算。"""
     t = text or ""
     markers = [
-        "扎门乌德", "甘其毛都", "乌兰巴托", "Ulaanbaatar", "улаанбаатар",
+        "扎门乌德", "甘其毛都", "中蒙口岸", "乌兰巴托", "Ulaanbaatar", "улаанбаатар",
         "蒙古国", "Монгол", "монгол улс", "海关", "警察", "检察院",
         "gaаль", "цагдаа", "гааль", "customs", "police", "Zamyn", "Gashuun",
         "蒙通社", "montsame", "gogo.mn", "ikon.mn",
@@ -314,8 +314,8 @@ def is_mongolia_country_related(text: str) -> bool:
     has_neg = any(re.search(p, tl, re.I) for p in NEGATIVE_GEO_MARKERS) or any(
         x in t for x in ("内蒙古", "布里亚特", "乌兰乌德", "赤塔", "恰克图")
     )
-    # 修改原因：正文70%+中国境内管控/宣传，仅顺带提蒙古 → 丢弃
-    if _china_domestic_control_ratio(t) >= 0.70:
+    # 修改原因：正文95%+纯国内管控才过滤，中蒙混合资讯放行
+    if _china_domestic_control_ratio(t) >= 0.95:
         pos_hits = sum(1 for p in positive if re.search(p, tl, re.I))
         if pos_hits <= 1:
             return False
@@ -334,7 +334,10 @@ def is_mongolia_country_related(text: str) -> bool:
 
 
 def is_unodc_mongolia_signal(text: str) -> bool:
-    """UNODC：必须出现蒙古正锚点，禁止仅靠东亚笼统表述放行。"""
+    """UNODC：全球禁毒报告/统计资讯正常入库，无需蒙古国字样。"""
+    t = (text or "").lower()
+    if "unodc" in t or "united nations office on drugs" in t:
+        return True
     return is_mongolia_country_related(text or "")
 
 
@@ -367,8 +370,8 @@ def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bo
     # 修改原因：国内口岸弱词无蒙古锚点禁止入库
     if any(x in (text or "") for x in DOMESTIC_CN_PORT_MARKERS) and not has_mongolia_port_anchor(text or ""):
         return False
-    # 修改原因：边境/口岸查获 + 蒙古口岸锚点 → 允许入库
-    if weak and has_mongolia_port_anchor(blob) and is_mongolia_country_related(text or ""):
+    # 修改原因：弱词+蒙古地理锚点即可入库，无需强毒品词
+    if weak and has_mongolia_port_anchor(blob):
         return True
     return False
 
@@ -385,7 +388,13 @@ def credibility_label(org_name: str = "", system_id: int = 0, url: str = "") -> 
     """可信度：官方高 / 地方媒体中 / 论坛低。"""
     o = (org_name or "").lower()
     u = (url or "").lower()
-    if system_id in (7, 9) or any(x in o for x in ("unodc", "蒙通社", "montsame", "incb", "nncc", "禁毒网")):
+    blob = o + u
+    # 修改原因：无蒙古锚点的 UNODC 全球报告标低可信仍入库
+    if "unodc" in blob:
+        if not any(x in blob for x in ("mongolia", "mongol", "蒙古", "монгол")):
+            return "低"
+        return "高"
+    if system_id in (7, 9) or any(x in o for x in ("蒙通社", "montsame", "incb", "nncc", "禁毒网")):
         return "高"
     if system_id == 11 or any(x in o + u for x in ("reddit", "论坛", "zhihu", "贴吧", "bluelight", "forum")):
         return "低"

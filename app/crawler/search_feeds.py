@@ -123,10 +123,6 @@ class SearchFeedCollector:
             "error_count": 0,
         }
         self._seen_urls: Set[str] = set()
-        # 修改原因：高优先级先消耗页数额度，国内任务后置
-        self._page_budget = int(getattr(settings, "crawl_max_pages_per_source", 60) or 60)
-        self._pages_consumed = 0
-        self._feeds_high_done = 0
 
     def _emit(self, event_type: str, **payload: Any) -> None:
         if not self.on_event:
@@ -187,14 +183,10 @@ class SearchFeedCollector:
                 return True
 
             feeds = [f for f in feeds if _feed_ok(f)]
-            # 修改原因：强制按 _feed_priority 升序，gov 快照最先执行
+            # 修改原因：按优先级排序执行，无额度隔离，国内/蒙古任务全部正常跑
             feeds.sort(key=_feed_priority)
-            high = [f for f in feeds if _feed_priority(f) < 75]
-            low = [f for f in feeds if _feed_priority(f) >= 75]
-            feeds = high + low
-            high_feed_total = len(high)
         except Exception:
-            high_feed_total = 0
+            pass
 
         total = len(feeds)
         self._emit(
@@ -214,24 +206,6 @@ class SearchFeedCollector:
             for idx, feed in enumerate(feeds, start=1):
                 org = feed["org_name"]
                 engine = feed.get("engine") or "google_news"
-                prio = _feed_priority(feed)
-                # 修改原因：国内任务后置，且仅在蒙古渠道消耗额度后才分配剩余页数
-                if prio >= 75:
-                    if self._feeds_high_done < high_feed_total:
-                        continue
-                    reserve = max(8, int(self._page_budget * 0.55))
-                    if self._pages_consumed >= reserve:
-                        self._emit(
-                            "source_skip",
-                            current_org=org,
-                            message=(
-                                f"跳过国内任务（页数额度已优先供给蒙古渠道 "
-                                f"{self._pages_consumed}/{self._page_budget}）"
-                            ),
-                        )
-                        continue
-                else:
-                    self._feeds_high_done += 1
                 self._emit(
                     "source_start",
                     current_index=idx,
@@ -269,14 +243,6 @@ class SearchFeedCollector:
                         pass
                     logger.warning("搜索失败 %s: %s", org, exc)
                     self._emit("source_error", current_org=org, message=f"失败：{org} — {exc}")
-                else:
-                    # 修改原因：统计页数消耗，供国内任务后置调度
-                    if engine in ("google_news", "bing_news", "ddg_news", "web_search"):
-                        self._pages_consumed += 15
-                    elif engine == "site_search":
-                        self._pages_consumed += 8
-                    elif engine == "reddit_search":
-                        self._pages_consumed += 5
                 self._emit(
                     "source_done",
                     current_index=idx,
@@ -309,12 +275,12 @@ class SearchFeedCollector:
         return published < datetime.utcnow() - timedelta(days=max_days)
 
     def _ingest_google_feed(self, client: httpx.Client, feed: dict, url: str) -> None:
-        # 修改原因：分页15轮、每轮num=100，破除20条硬上限
+        # 修改原因：分页25轮、每轮num=100，破除20条硬上限
         import random
         import time
 
         seen_links: Set[str] = set()
-        for page in range(15):
+        for page in range(25):
             page_url = url
             if page > 0:
                 page_url = (
@@ -729,11 +695,6 @@ class SearchFeedCollector:
         summary = normalize_text(summary)
         if not title:
             return
-        # 短快讯：标题+摘要 ≥100 或标题本身涉毒即可（取消 250 字符门槛）
-        if len(title) + len(summary) < 100 and not is_drug_related(title, loose=False):
-            if len(title) < 12:
-                self.stats["items_filtered"] += 1
-                return
         if is_forbidden_url(url or ""):
             # 修改原因：仅拦原生直链；快照包装链可入库
             self.stats["items_filtered"] += 1
@@ -778,11 +739,16 @@ class SearchFeedCollector:
         if req_mn is None:
             req_mn = require_mongolia
         # UNODC / 快照任务：放宽蒙古信号
+        org_l = (feed.get("org_name") or "").lower()
+        q_l = (feed.get("query") or "").lower()
+        is_unodc_feed = "unodc" in org_l or "unodc" in q_l or "unodc" in body_l
         if req_mn and not is_mongolia_country_related(body):
-            if feed.get("snapshot_only") or "unodc" in body_l:
+            if feed.get("snapshot_only"):
                 if not is_unodc_mongolia_signal(body):
                     self.stats["items_filtered"] += 1
                     return
+            elif is_unodc_feed:
+                pass  # 修改原因：UNODC 全球报告无需蒙古国字样，标低可信仍入库
             else:
                 self.stats["items_filtered"] += 1
                 return

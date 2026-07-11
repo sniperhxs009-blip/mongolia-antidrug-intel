@@ -107,7 +107,8 @@ def test_hash_stable():
 
 def test_category_and_credibility():
     assert classify_category("border customs drug trafficking seizure") == "跨境毒情"
-    assert credibility_label("UNODC 世界毒品报告", 7) == "高"
+    assert credibility_label("UNODC 世界毒品报告", 7) == "低"
+    assert credibility_label("UNODC Mongolia report", 7) == "高"
     assert credibility_label("论坛·Reddit", 11) == "低"
 
 

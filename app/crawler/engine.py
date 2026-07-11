@@ -476,8 +476,8 @@ class CrawlEngine:
             or (soup.title.get_text() if soup.title else "")
             or src.org_name
         )
-        # 去除脚本样式与站点导航，避免侧栏/相关推荐把毒品词污染进正文
-        for tag in soup(["script", "style", "noscript", "nav", "footer", "header", "aside", "form"]):
+        # 修改原因：仅删 script/style/noscript，保留 nav/header/aside/footer 正文
+        for tag in soup(["script", "style", "noscript"]):
             tag.decompose()
         # 优先正文容器，避免全站 li/菜单误伤
         main = (

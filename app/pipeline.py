@@ -102,8 +102,11 @@ def run_intel_cycle(
             stats_collector = OfficialStatsCollector(db, on_event=on_event)
             result["official_stats"] = stats_collector.run(mode="news" if news_only else "full")
 
-        # 仅官网浅扫轻量化；页数上限放宽到 30 以配合 depth=2
-        if settings.enable_official_crawl:
+        # 修改原因：news 模式搜索采集后同步执行核心官网浅扫，补齐蒙古政府快照情报
+        run_core_crawl = settings.enable_official_crawl and (
+            not news_only or getattr(settings, "enable_core_official_in_news", True)
+        )
+        if run_core_crawl:
             old_max = settings.crawl_max_pages_per_source
             try:
                 shallow = int(getattr(settings, "crawl_max_pages_core", 4) or 4)
