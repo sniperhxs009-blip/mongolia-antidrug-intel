@@ -54,6 +54,7 @@ def _limit_for_host(host: str) -> int:
     # 修改原因：国内新华网/禁毒网等单日上限扩容至 30
     domestic_cn = (
         "news.cn", "xinhuanet.com", "nncc626.com", "nmg.110.gov.cn",
+        "chinanews.cn", "chinanews.com.cn",
     )
     if any(h == s or h.endswith("." + s) for s in domestic_cn):
         return 30

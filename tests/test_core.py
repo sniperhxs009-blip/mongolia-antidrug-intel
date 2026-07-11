@@ -105,7 +105,15 @@ def test_hash_stable():
     assert a == b
 
 
-def test_category_and_credibility():
+def test_regulatory_and_port_seizure_news():
+    from app.crawler.filters import has_regulatory_drug_term, is_drug_related, title_has_strong_drug
+
+    assert title_has_strong_drug("蒙古国成立国家级药品质量检测实验室")
+    assert has_regulatory_drug_term("National drug quality laboratory controlled substance")
+    assert is_drug_related("全国口岸今年累计缴获毒品4.07吨 扎门乌德")
+    assert is_drug_related("那达慕摔跤选手检出违禁兴奋剂 蒙古国", loose=False)
+
+
     assert classify_category("border customs drug trafficking seizure") == "跨境毒情"
     assert credibility_label("UNODC 世界毒品报告", 7) == "低"
     assert credibility_label("UNODC Mongolia report", 7) == "高"

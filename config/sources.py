@@ -33,6 +33,8 @@ ALLOWED_DOMAINS = [
     "nncc626.com", "www.nncc626.com",
     # 补充国际合规媒体
     "news.cn", "www.news.cn", "xinhuanet.com", "www.xinhuanet.com",
+    "chinanews.com.cn", "www.chinanews.com.cn", "chinanews.cn",
+    "robertritz.com", "mongolia.robertritz.com", "www.robertritz.com",
     "cgtn.com", "www.cgtn.com",
     "akipress.com", "www.akipress.com",
     # 检索入口

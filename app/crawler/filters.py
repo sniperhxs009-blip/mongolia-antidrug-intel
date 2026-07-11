@@ -23,10 +23,21 @@ STRONG_DRUG_TERMS = [
     "芬太尼", "尼秦", "异托尼他秦", "安纳咖", "甲基苯丙胺", "冰毒", "海洛因", "大麻",
     "可卡因", "氯胺酮", "鸦片", "合成大麻素", "易制毒", "麻精药品",
     "毒品", "禁毒", "缉毒", "贩毒", "吸毒", "涉毒", "制毒",
+    "管制药品", "管制药物", "精神药品", "麻醉药品", "药品安全", "缴获毒品", "查获毒品",
     "хар тамхи", "мансууруулах", "фентанил", "нитазен", "метамфетамин",
     "fentanyl", "nitazene", "isotonitazene", "methamphetamine", "crystal meth",
     "heroin", "cannabis", "marijuana", "cocaine", "ketamine", "narcotic",
     "anti-drug", "antidrug", "drug trafficking", "illicit drug", "illegal drug",
+    "controlled substance", "psychotropic", "pharmaceutical",
+]
+# 修改原因：麻精药品监管/口岸缴获/禁毒立法类新闻（蒙通社、中新网等）入库通道
+REGULATORY_DRUG_TERMS = [
+    "管制药品", "管制药物", "麻精药品", "精神药品", "麻醉药品", "药品安全", "药品质量",
+    "药品检测", "禁毒法", "缴获毒品", "查获毒品", "毒品持有", "清源断流", "禁毒宣传",
+    "毒品犯罪", "缉毒犬", "音乐节", "playtime",
+    "controlled substance", "psychotropic", "pharmaceutical", "drug quality",
+    "drug law", "narcotic law", "quality laboratory", "screening program",
+    "зохицуулалттай", "эмийн аюулгүй", "мансууруулах бодисын", "сэтгэцэд",
 ]
 # 【弱执法词】单独命中不入库，须与强毒品词同现
 WEAK_DRUG_TERMS = [
@@ -341,9 +352,19 @@ def is_unodc_mongolia_signal(text: str) -> bool:
     return is_mongolia_country_related(text or "")
 
 
+def has_regulatory_drug_term(text: str) -> bool:
+    """麻精药品监管、口岸缴获、禁毒立法类信号（修改原因：覆盖蒙通社药品检测等新闻）。"""
+    t = (text or "").lower()
+    return any(x.lower() in t for x in REGULATORY_DRUG_TERMS)
+
+
 def _has_hard_exclude(blob: str) -> bool:
     low = (blob or "").lower()
+    mn_ctx = is_mongolia_country_related(blob)
     for pat in HARD_EXCLUDE_PATTERNS:
+        # 修改原因：蒙古本土赛事禁药（那达慕等）仍收录，仅拦无蒙古锚点的纯奥运兴奋剂噪音
+        if pat in (r"兴奋剂", r"\bdoping\b", r"\bwada\b") and mn_ctx:
+            continue
         if re.search(pat, low, re.I):
             return True
     for t in TOPIC_BLACKLIST:
@@ -362,6 +383,9 @@ def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bo
     extras = [str(x).lower() for x in (extra or []) if x]
     if has_strong_drug_term(blob) or (extras and any(e in blob for e in extras if len(e) >= 3)):
         return True
+    # 修改原因：麻精药品监管/禁毒立法/口岸缴获类资讯直接入库
+    if has_regulatory_drug_term(blob):
+        return True
     if any(x in (text or "") for x in DOMESTIC_CN_PORT_MARKERS) and not has_mongolia_port_anchor(text or ""):
         return False
     weak_terms = list(WEAK_DRUG_TERMS)
@@ -371,13 +395,20 @@ def is_drug_related(text: str, extra=None, loose: bool = False, gov_snapshot: bo
     # 修改原因：废除弱词必须搭配强毒品词；口岸/查获弱词+蒙古锚点直接入库
     if weak and has_mongolia_port_anchor(blob):
         return True
+    # 修改原因：蒙古本土赛事禁药（那达慕等）纳入监测
+    if is_mongolia_country_related(text or "") and any(
+        x in blob for x in ("兴奋剂", "doping", "禁药", "违禁")
+    ):
+        return True
     return False
 
 
 def title_has_strong_drug(title: str) -> bool:
-    """标题前置过滤：强毒品词，或弱词+蒙古口岸锚点。"""
+    """标题前置过滤：强毒品词、监管类词，或弱词+蒙古口岸锚点。"""
     tt = title or ""
     if has_strong_drug_term(tt):
+        return True
+    if has_regulatory_drug_term(tt):
         return True
     return any(w.lower() in tt.lower() for w in WEAK_DRUG_TERMS) and has_mongolia_port_anchor(tt)
 
@@ -488,6 +519,7 @@ def is_allowed_url(url: str, extra_domains: Optional[list] = None) -> bool:
             "reuters.com", "apnews.com", "bbc.com", "bbc.co.uk",
             "xinhuanet.com", "news.cn", "cgtn.com", "akipress.com",
             "tass.com", "ria.ru", "montsame.mn", "gogo.mn", "ikon.mn",
+            "chinanews.cn", "robertritz.com",
         ):
             if host_bare == suf or host.endswith("." + suf):
                 return True

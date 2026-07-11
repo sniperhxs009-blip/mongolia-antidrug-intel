@@ -228,6 +228,9 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "\"drug seizure\" OR \"drug bust\" OR \"drugs seized\"",
         "\"Zamyn-Uud\" OR \"Gashuun Sukhait\" OR Erenhot (drug OR narcotic OR seizure)",
         "\"China-Mongolia\" OR \"Sino-Mongolian\" (border OR customs) (drug OR narcotic)",
+        "controlled substance OR psychotropic OR pharmaceutical OR \"drug quality\"",
+        "\"drug law\" OR \"narcotic law\" OR \"anti-drug law\" Mongolia",
+        "Playtime festival OR \"drug enforcement\" Ulaanbaatar",
     ]
     en_full = [
         "narcotic OR \"illegal drug\" OR \"illicit drug\" OR \"drug trafficking\" OR \"drug smuggling\"",
@@ -280,6 +283,11 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "хар тамхи",
         "метамфетамин",
         "фентанил",
+        "管制药品",
+        "药品安全",
+        "controlled substance",
+        "psychotropic",
+        "禁毒法",
     ]
     site_engines = [
         {
@@ -349,6 +357,10 @@ def build_search_queries(mode: str = "full", when: str = "") -> List[dict]:
         "蒙古国 海关 毒品",
         "蒙古国 警察 缉毒",
         "蒙古国 新型毒品",
+        "管制药品 OR 药品安全 OR 麻精药品",
+        "禁毒法 OR 修订 吸毒 OR 贩毒",
+        "口岸 缴获 毒品 吨 OR 公斤",
+        "Playtime 音乐节 缉毒 OR 毒品",
     ]
     zh_full = [
         "毒品 OR 缉毒 OR 禁毒 OR 贩毒",

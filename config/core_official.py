@@ -52,7 +52,7 @@ SNAPSHOT_SAFE_HOSTS: Set[str] = {
 SEARCH_NEGATIVE_EXCLUDE = (
     ' -"内蒙古" -"Inner Mongolia" -乌兰乌德 -布里亚特 -赤塔 -恰克图 -后贝加尔 '
     '-乌兰乌德 -Ulan-Ude -Buryatia -Buryat -Chita -Kyakhta -Zabaikal -Забайкал '
-    '-兴奋剂 -奥运会 -tobacco -cigarette -普通药品 -"medical care"'
+    '-奥运会 -tobacco -cigarette -普通药品 -"medical care"'
 )
 
 # 修改原因：所有 site: 检索 query 统一追加边境执法蒙语词
@@ -88,12 +88,16 @@ CORE_OFFICIAL_SOURCES: List[Dict] = [
         "system_name": "全国媒体与公开资讯",
         "org_name": "蒙通社 MONTSAME",
         "base_url": "https://montsame.mn",
-        "seed_paths": ["/", "/cn", "/en", "/mn"],
+        "seed_paths": ["/", "/cn", "/en", "/mn", "/en/read", "/mn/read"],
         "lang": "zh,en,mn",
         "search_mode_only": False,
         "core_official": True,
         "tier": "primary",
-        "keywords_extra": ["хар тамхи", "毒品", "narcotics", "мансууруулах"],
+        "keywords_extra": [
+            "хар тамхи", "毒品", "narcotics", "мансууруулах",
+            "controlled substance", "pharmaceutical", "psychotropic", "drug quality",
+            "зохицуулалттай", "эмийн", "药品安全", "管制药品",
+        ],
     },
     {
         "system_id": 8,
@@ -141,7 +145,31 @@ CORE_OFFICIAL_SOURCES: List[Dict] = [
         "search_mode_only": False,
         "core_official": True,
         "tier": "primary",
-        "keywords_extra": ["narcotics", "drug", "fentanyl"],
+        "keywords_extra": ["narcotics", "drug", "fentanyl", "Playtime", "drug enforcement"],
+    },
+    {
+        "system_id": 8,
+        "system_name": "全国媒体与公开资讯",
+        "org_name": "Mongolia Robertritz",
+        "base_url": "https://mongolia.robertritz.com",
+        "seed_paths": ["/"],
+        "lang": "en",
+        "search_mode_only": False,
+        "core_official": True,
+        "tier": "primary",
+        "keywords_extra": ["narcotic", "drug law", "fentanyl", "Playtime", "Mongolia"],
+    },
+    {
+        "system_id": 10,
+        "system_name": "全球媒体与国际禁毒机构",
+        "org_name": "中国新闻网",
+        "base_url": "https://www.chinanews.com.cn",
+        "seed_paths": ["/"],
+        "lang": "zh",
+        "search_mode_only": False,
+        "core_official": True,
+        "tier": "secondary",
+        "keywords_extra": ["蒙古国", "扎门乌德", "甘其毛都", "毒品", "缉毒", "缴获"],
     },
     # 二、国际禁毒权威
     {
@@ -425,11 +453,16 @@ def build_core_site_search_queries(
     gov_media_kw_mn = [
         "цагдаа баривчилгаа", "гааль хураан", "цагдаагийн мэдэгдэл",
         "гаалийн мэдэгдэл", "хил нэвтрүүлэх", "мансууруулах мэдэгдэл",
+        "зохицуулалттай", "эмийн аюулгүй", "сэтгэцэд нөлөөлөх",
+    ]
+    site_kw_regulatory = [
+        "管制药品", "药品安全", "controlled substance", "psychotropic",
+        "drug quality", "禁毒法", "缴获毒品",
     ]
     for path, kws, lang in (
         ("/cn/search?q={q}", site_kw_zh, "zh"),
         ("/en/search?q={q}", site_kw_en, "en"),
-        ("/mn/search?q={q}", site_kw_mn + gov_media_kw_mn, "mn"),
+        ("/mn/search?q={q}", site_kw_mn + gov_media_kw_mn + site_kw_regulatory, "mn"),
     ):
         for kw in kws:
             tasks.append({
@@ -471,12 +504,15 @@ def build_core_site_search_queries(
             })
 
     media_extra = [
-        ("montsame.mn", "毒品 OR 缉毒 OR 芬太尼 OR 安纳咖", "zh-CN", "cn", "CN:zh-Hans"),
-        ("montsame.mn", "narcotic OR fentanyl OR methamphetamine OR seizure", "en", "us", "US:en"),
-        ("gogo.mn", "мансууруулах OR \"хар тамхи\" OR фентанил OR цагдаа", "mn", "mn", "MN:mn"),
-        ("ikon.mn", "мансууруулах OR метамфетамин OR баривчилгаа OR гааль", "mn", "mn", "MN:mn"),
-        ("news.mn", "мансууруулах OR гааль OR хил OR цагдаа", "mn", "mn", "MN:mn"),
-        ("ubpost.mongolnews.mn", "drug OR narcotic OR trafficking OR seizure", "en", "us", "US:en"),
+        ("montsame.mn", "毒品 OR 缉毒 OR 芬太尼 OR 安纳咖 OR 管制药品 OR 药品安全", "zh-CN", "cn", "CN:zh-Hans"),
+        ("montsame.mn", "controlled substance OR pharmaceutical OR psychotropic OR \"drug quality\" OR narcotic", "en", "us", "US:en"),
+        ("montsame.mn", "зохицуулалттай OR эмийн аюулгүй OR мансууруулах бодис", "mn", "mn", "MN:mn"),
+        ("gogo.mn", "мансууруулах OR \"хар тамхи\" OR фентанил OR цагдаа OR зохицуулалттай", "mn", "mn", "MN:mn"),
+        ("ikon.mn", "мансууруулах OR метамфетамин OR баривчилгаа OR гааль OR зохицуулалттай", "mn", "mn", "MN:mn"),
+        ("news.mn", "мансууруулах OR гааль OR хил OR цагдаа OR эмийн", "mn", "mn", "MN:mn"),
+        ("ubpost.mongolnews.mn", "drug OR narcotic OR trafficking OR seizure OR Playtime", "en", "us", "US:en"),
+        ("mongolia.robertritz.com", "Mongolia narcotic OR \"drug law\" OR fentanyl OR Playtime OR seizure", "en", "us", "US:en"),
+        ("chinanews.com.cn", "蒙古国 OR 扎门乌德 OR 甘其毛都 (毒品 OR 缉毒 OR 缴获 OR 口岸)", "zh-CN", "cn", "CN:zh-Hans"),
     ]
     for domain, qcore, hl, gl, ceid in media_extra:
         qcore_full = _site_query_core(qcore)

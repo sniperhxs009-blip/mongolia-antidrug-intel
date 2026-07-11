@@ -18,6 +18,7 @@ from app.crawler.filters import (
     content_hash,
     credibility_label,
     detect_lang,
+    has_regulatory_drug_term,
     intel_level,
     is_allowed_url,
     is_critical,
@@ -57,6 +58,32 @@ def _feed_is_gov_snapshot(feed: dict) -> bool:
 def _gov_weak_signal(title: str, summary: str) -> bool:
     blob = f"{title} {summary}".lower()
     return any(t in blob for t in GOV_WEAK_TERMS)
+
+
+def _feed_is_expanded_media(feed: dict) -> bool:
+    """蒙通社/IKON/UB/中新网/robertritz 等宽口径媒体源。"""
+    org = (feed.get("org_name") or "").lower()
+    q = (feed.get("query") or "").lower()
+    su = (feed.get("search_url") or "").lower()
+    keys = (
+        "montsame", "gogo", "ikon", "news.mn", "蒙通社", "ub post", "ubpost",
+        "robertritz", "chinanews", "中新网", "麻精", "管制药品", "药品安全",
+    )
+    return any(k in org or k in q or k in su for k in keys)
+
+
+def title_passes_feed_gate(title: str, summary: str, feed: dict) -> bool:
+    """修改原因：放宽 Google/站内标题门槛，覆盖药品监管、立法、口岸缴获类新闻。"""
+    blob = f"{title} {summary}"
+    if title_has_strong_drug(blob):
+        return True
+    if _feed_is_gov_snapshot(feed) and _gov_weak_signal(title, summary):
+        return True
+    if _feed_is_expanded_media(feed) and has_regulatory_drug_term(blob):
+        return True
+    if has_regulatory_drug_term(blob) and is_mongolia_country_related(blob):
+        return True
+    return False
 
 
 def _feed_priority(feed: dict) -> int:
@@ -308,11 +335,10 @@ class SearchFeedCollector:
                 if not title:
                     continue
                 is_gov = _feed_is_gov_snapshot(feed)
-                # 修改原因：gov 快照放宽标题过滤，口岸/警察/海关弱词即可通过
-                if not title_has_strong_drug(title) and not title_has_strong_drug(summary):
-                    if not (is_gov and _gov_weak_signal(title, summary)):
-                        self.stats["items_filtered"] += 1
-                        continue
+                # 修改原因：放宽标题过滤，药品监管/立法/口岸类新闻可过 RSS 门槛
+                if not title_passes_feed_gate(title, summary, feed):
+                    self.stats["items_filtered"] += 1
+                    continue
                 real_url = _resolve_google_article_url(link, client)
                 store_url = sanitize_store_url(real_url or link, title=title)
                 # 修改原因：RSS 链接本身含 gov.mn 片段也转快照
@@ -602,10 +628,10 @@ class SearchFeedCollector:
             full = urljoin(search_url, href)
             host = urlparse(full).netloc.lower()
             if not any(x in host for x in (
-                "montsame.mn", "gogo.mn", "ikon.mn", "news.mn",
-                "nncc626.com", "chinanews.com", "unodc.org",
-                "mongolia.un.org", "nmg.110.gov.cn", "odkb-csto.org",
-                "scoec.gov.cn", "mongolnews.mn", "ubpost",
+                "montsame.mn", "gogo.mn", "ikon.mn", "news.mn", "mongolnews.mn",
+                "nncc626.com", "chinanews.cn", "chinanews.com", "robertritz.com",
+                "unodc.org", "mongolia.un.org", "nmg.110.gov.cn", "odkb-csto.org",
+                "scoec.gov.cn", "news.cn", "xinhuanet.com",
             )):
                 continue
             if is_forbidden_url(full):
@@ -617,13 +643,17 @@ class SearchFeedCollector:
                 continue
             article_ok = any(
                 x in path
-                for x in ("/n/", "/r/", "/a/", "/news/", "/post/", "/article/", "/mn/", "/en/", "/cn/")
+                for x in (
+                    "/n/", "/r/", "/a/", "/news/", "/post/", "/article/",
+                    "/mn/", "/en/", "/cn/", "/read/", "/sh/",
+                )
             )
             if not article_ok:
                 continue
-            # 修改原因：站内候选必须标题含强毒品词，弱词/检索词 alone 不触发下载
-            if not title_has_strong_drug(text):
-                continue
+            # 修改原因：站内候选放宽至监管类/强毒品词/检索词命中
+            if not title_has_strong_drug(text) and not has_regulatory_drug_term(text):
+                if not has_regulatory_drug_term(query) and not title_has_strong_drug(query):
+                    continue
             candidates.append((text, full))
         return candidates
 
